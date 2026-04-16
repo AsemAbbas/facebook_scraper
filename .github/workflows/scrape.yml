@@ -1,112 +1,73 @@
-name: Marsad · Scrape Facebook Pages
+name: Scrape
 
 on:
   schedule:
-    # كل 6 ساعات
     - cron: '0 */6 * * *'
-
-  # تشغيل يدوي من واجهة GitHub أو من الموقع عبر API
   workflow_dispatch:
     inputs:
       page_slug:
-        description: 'سحب صفحة محددة (اتركه فارغاً لكل الصفحات)'
+        description: 'Slug of single page (empty = all)'
         required: false
         default: ''
       force_source:
-        description: 'إجبار مصدر محدد (apify/fetchrss/rssapp/rsshub/playwright)'
+        description: 'Force source (apify/fetchrss/rssapp/rsshub/playwright)'
         required: false
         default: ''
 
 permissions:
   contents: write
 
-concurrency:
-  group: scrape
-  cancel-in-progress: false
-
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: Install Python deps
+        run: pip install pyyaml aiohttp playwright
 
-      - name: Install Playwright (if used)
-        run: |
-          if grep -Pzo 'name:\s*playwright[\s\S]*?enabled:\s*true' config.yml >/dev/null 2>&1; then
-            echo "✅ Playwright مفعّل - تثبيت chromium"
-            playwright install chromium --with-deps
-          else
-            echo "ℹ️  Playwright غير مفعّل - تخطي"
-          fi
+      - name: Install Chromium
+        run: python -m playwright install chromium --with-deps
 
       - name: Run scraper
         env:
-          # Apify
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
-          # FetchRSS
           FETCHRSS_API_KEY: ${{ secrets.FETCHRSS_API_KEY }}
-          # RSS.app
           RSSAPP_API_KEY: ${{ secrets.RSSAPP_API_KEY }}
-          # RSSHub
           RSSHUB_ACCESS_KEY: ${{ secrets.RSSHUB_ACCESS_KEY }}
-          # Telegram (اختياري)
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # Email (اختياري)
-          ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
-          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
-          ALERT_EMAIL_PASSWORD: ${{ secrets.ALERT_EMAIL_PASSWORD }}
         run: |
-          EXTRA_ARGS=""
-          if [ -n "${{ github.event.inputs.page_slug }}" ]; then
-            EXTRA_ARGS="$EXTRA_ARGS --slug ${{ github.event.inputs.page_slug }}"
+          ARGS=""
+          if [ -n "${{ inputs.page_slug }}" ]; then
+            ARGS="$ARGS --slug ${{ inputs.page_slug }}"
           fi
-          if [ -n "${{ github.event.inputs.force_source }}" ]; then
-            EXTRA_ARGS="$EXTRA_ARGS --source ${{ github.event.inputs.force_source }}"
+          if [ -n "${{ inputs.force_source }}" ]; then
+            ARGS="$ARGS --source ${{ inputs.force_source }}"
           fi
-          python scripts/run.py $EXTRA_ARGS
+          python scripts/run.py $ARGS
 
-      - name: Send Telegram notifications (optional)
+      - name: Telegram notify
         if: env.TELEGRAM_BOT_TOKEN != ''
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          if [ -f scripts/telegram_notify.py ]; then
-            python scripts/telegram_notify.py || echo "⚠️ Telegram notify failed (non-fatal)"
-          fi
+        run: python scripts/telegram_notify.py || true
 
-      - name: Commit results
+      - name: Commit data
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add web/data/
-          if git diff --staged --quiet; then
-            echo "لا توجد تغييرات جديدة"
+          if git diff --cached --quiet; then
+            echo "No changes"
           else
-            git commit -m "🤖 تحديث البيانات · $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git commit -m "data: scheduled scrape $(date -u +'%Y-%m-%dT%H:%MZ')"
             git push
           fi
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scrape-logs-${{ github.run_id }}
-          path: |
-            web/data/
-          retention-days: 7
