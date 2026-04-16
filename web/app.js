@@ -1,19 +1,22 @@
 // =====================================================================
-// مَرصَد · Frontend v2.1
+// مَرصَد · Frontend v2.2
 // =====================================================================
 
 const STATE = {
   index: null,
   allPosts: [],
   filtered: [],
-  pages: {},       // الصفحات اللي فيها بيانات فعلية
-  pagesConfig: [], // الصفحات من pages.json (للإدارة)
+  pages: {},        // الصفحات اللي فيها بيانات
+  pagesConfig: [],  // من pages.json
+  history: [],      // سجل التشغيلات
+  liveRuns: [],     // workflows قيد التنفيذ
 };
 
 const LS = {
   token: 'marsad_token',
   pagesConfig: 'marsad_pages_draft',
-  filters: 'marsad_filters_v1',
+  filters: 'marsad_filters_v2',
+  firstVisit: 'marsad_first_visit',
 };
 
 const els = {
@@ -22,20 +25,17 @@ const els = {
   statPosts: document.getElementById('statPosts'),
   statReactions: document.getElementById('statReactions'),
   statComments: document.getElementById('statComments'),
-  // filters basic
+  // filters
   pageFilter: document.getElementById('pageFilter'),
+  sourceFilter: document.getElementById('sourceFilter'),
   sortFilter: document.getElementById('sortFilter'),
   searchInput: document.getElementById('searchInput'),
-  sourceFilter: document.getElementById('sourceFilter'),
-  // filters advanced
   dateFrom: document.getElementById('dateFrom'),
   dateTo: document.getElementById('dateTo'),
   minReactions: document.getElementById('minReactions'),
   minComments: document.getElementById('minComments'),
   hasImageOnly: document.getElementById('hasImageOnly'),
   highEngagementOnly: document.getElementById('highEngagementOnly'),
-  toggleAdvanced: document.getElementById('toggleAdvanced'),
-  advancedFilters: document.getElementById('advancedFilters'),
   resetFilters: document.getElementById('resetFilters'),
   // results
   postsGrid: document.getElementById('postsGrid'),
@@ -47,8 +47,15 @@ const els = {
   triggerBtn: document.getElementById('triggerBtn'),
   exportBtn: document.getElementById('exportBtn'),
   setupBtn: document.getElementById('setupBtn'),
+  historyBtn: document.getElementById('historyBtn'),
   managePagesBtn: document.getElementById('managePagesBtn'),
   lastUpdateText: document.getElementById('lastUpdateText'),
+  // live banner
+  liveStatusBanner: document.getElementById('liveStatusBanner'),
+  liveStatusText: document.getElementById('liveStatusText'),
+  liveStatusLink: document.getElementById('liveStatusLink'),
+  // footer
+  footerYear: document.getElementById('footerYear'),
   // modal
   modal: document.getElementById('modal'),
   modalClose: document.getElementById('modalClose'),
@@ -59,24 +66,50 @@ const els = {
 // ========= Init =========
 
 async function init() {
+  els.footerYear.textContent = new Date().getFullYear();
+
   await loadIndex();
   await loadAllPages();
   await loadPagesConfig();
+  await loadHistory();
+
+  setDefaultDateRange();   // آخر 24 ساعة افتراضياً
   restoreFilters();
   setupListeners();
   applyFilters();
+
+  // Polling للعمليات الحية
+  pollLiveRuns();
+  setInterval(pollLiveRuns, 30000); // كل 30 ثانية
+}
+
+function setDefaultDateRange() {
+  // لو ما في saved filters، ضع آخر 24 ساعة
+  const saved = localStorage.getItem(LS.filters);
+  if (saved) return;
+
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  els.dateFrom.value = formatDateInput(yesterday);
+  els.dateTo.value = formatDateInput(now);
+}
+
+function formatDateInput(d) {
+  // YYYY-MM-DD
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 async function loadIndex() {
   try {
     const res = await fetch('data/index.json?t=' + Date.now());
-    if (!res.ok) throw new Error('No index file');
+    if (!res.ok) throw new Error('No index');
     STATE.index = await res.json();
     renderPageFilter();
     updateLastUpdate(STATE.index.last_run);
   } catch (e) {
     STATE.index = { pages: [], last_run: null };
-    showEmpty('لا توجد بيانات بعد. افتح دليل الإعداد من الزر ⓘ في الأعلى.');
+    showEmpty('لا توجد بيانات بعد. افتح "دليل الإعداد" (ⓘ في الأعلى).');
   }
 }
 
@@ -87,7 +120,7 @@ async function loadAllPages() {
   const results = await Promise.allSettled(
     pages.map(async (p) => {
       const res = await fetch(`data/${p.slug}.json?t=${Date.now()}`);
-      if (!res.ok) throw new Error(`Failed to load ${p.slug}`);
+      if (!res.ok) throw new Error(`Failed ${p.slug}`);
       return res.json();
     })
   );
@@ -107,39 +140,42 @@ async function loadAllPages() {
       });
     }
   });
-
   updateStats();
 }
 
 async function loadPagesConfig() {
-  // أولاً: جرّب تحميل pages.json من السيرفر
+  // محاولة قراءة pages.json من الريبو
   try {
     const res = await fetch('../pages.json?t=' + Date.now());
     if (res.ok) {
       const data = await res.json();
-      STATE.pagesConfig = data.pages || [];
+      STATE.pagesConfig = (data.pages || []).map(p => ({ ...p }));
       return;
     }
   } catch {}
-  // fallback: استخدم STATE.index
+
+  // fallback: من STATE.index
   STATE.pagesConfig = (STATE.index?.pages || []).map(p => ({
-    slug: p.slug,
-    name: p.name,
-    url: p.url,
-    max_posts: 30,
-    source: 'auto',
-    enabled: true,
+    slug: p.slug, name: p.name, url: p.url,
+    max_posts: 30, source: 'auto', enabled: true,
   }));
 
-  // أو من localStorage draft
+  // draft من localStorage
   try {
     const saved = localStorage.getItem(LS.pagesConfig);
     if (saved) {
       const draft = JSON.parse(saved);
-      if (Array.isArray(draft) && draft.length) {
-        STATE.pagesConfig = draft;
-      }
+      if (Array.isArray(draft) && draft.length) STATE.pagesConfig = draft;
     }
+  } catch {}
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('data/history.json?t=' + Date.now());
+    if (!res.ok) return;
+    const data = await res.json();
+    STATE.history = data.runs || [];
   } catch {}
 }
 
@@ -153,32 +189,64 @@ function renderPageFilter() {
   els.pageFilter.innerHTML = opts.join('');
 }
 
+// ========= Live Runs Polling =========
+
+async function pollLiveRuns() {
+  const token = (() => { try { return localStorage.getItem(LS.token); } catch { return null; } })();
+  if (!token) return;
+
+  const info = detectRepoInfo();
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${info.owner}/${info.repo}/actions/runs?per_page=5&event=workflow_dispatch`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json',
+        },
+      }
+    );
+    if (!res.ok) return;
+    const data = await res.json();
+    const runs = data.workflow_runs || [];
+
+    // Live = queued أو in_progress
+    const live = runs.filter(r => ['queued', 'in_progress'].includes(r.status));
+    STATE.liveRuns = live;
+
+    if (live.length) {
+      const r = live[0];
+      els.liveStatusBanner.hidden = false;
+      els.liveStatusText.textContent = `يوجد ${live.length} عملية سحب قيد التنفيذ… (${r.status === 'queued' ? 'في الطابور' : 'قيد التشغيل'})`;
+      els.liveStatusLink.href = r.html_url;
+    } else {
+      els.liveStatusBanner.hidden = true;
+    }
+  } catch {}
+}
+
 // ========= Filters =========
 
 function applyFilters() {
   let posts = [...STATE.allPosts];
   let activeFilters = 0;
 
-  // الصفحة
   if (els.pageFilter.value !== 'all') {
     posts = posts.filter(p => p.page_slug === els.pageFilter.value);
     activeFilters++;
   }
 
-  // المصدر
   if (els.sourceFilter.value !== 'all') {
     posts = posts.filter(p => p.source === els.sourceFilter.value);
     activeFilters++;
   }
 
-  // بحث
   const search = els.searchInput.value.trim().toLowerCase();
   if (search) {
     posts = posts.filter(p => (p.text || '').toLowerCase().includes(search));
     activeFilters++;
   }
 
-  // تاريخ من
   if (els.dateFrom.value) {
     const from = new Date(els.dateFrom.value).getTime();
     posts = posts.filter(p => {
@@ -188,7 +256,6 @@ function applyFilters() {
     activeFilters++;
   }
 
-  // تاريخ إلى
   if (els.dateTo.value) {
     const to = new Date(els.dateTo.value).getTime() + 86400000; // include end day
     posts = posts.filter(p => {
@@ -198,33 +265,28 @@ function applyFilters() {
     activeFilters++;
   }
 
-  // حد أدنى تفاعل
   const minReact = parseInt(els.minReactions.value) || 0;
   if (minReact > 0) {
     posts = posts.filter(p => (p.reactions || 0) >= minReact);
     activeFilters++;
   }
 
-  // حد أدنى تعليقات
   const minComm = parseInt(els.minComments.value) || 0;
   if (minComm > 0) {
     posts = posts.filter(p => (p.comments || 0) >= minComm);
     activeFilters++;
   }
 
-  // بصور فقط
   if (els.hasImageOnly.checked) {
     posts = posts.filter(p => !!p.image_url);
     activeFilters++;
   }
 
-  // تفاعل عالٍ فقط (>= 1000)
   if (els.highEngagementOnly.checked) {
     posts = posts.filter(p => (p.reactions || 0) >= 1000);
     activeFilters++;
   }
 
-  // ترتيب
   const sortVal = els.sortFilter.value;
   posts.sort((a, b) => {
     const aDate = new Date(a.published_at || a.scraped_at || 0);
@@ -241,7 +303,6 @@ function applyFilters() {
 
   STATE.filtered = posts;
 
-  // Badge للفلاتر النشطة
   if (activeFilters > 0) {
     els.activeFiltersBadge.hidden = false;
     els.activeFiltersBadge.textContent = `${activeFilters} فلتر نشط`;
@@ -266,7 +327,6 @@ function saveFilters() {
       minComments: els.minComments.value,
       hasImageOnly: els.hasImageOnly.checked,
       highEngagementOnly: els.highEngagementOnly.checked,
-      advancedOpen: !els.advancedFilters.hidden,
     }));
   } catch {}
 }
@@ -286,7 +346,6 @@ function restoreFilters() {
     if (f.minComments) els.minComments.value = f.minComments;
     if (f.hasImageOnly) els.hasImageOnly.checked = true;
     if (f.highEngagementOnly) els.highEngagementOnly.checked = true;
-    if (f.advancedOpen) els.advancedFilters.hidden = false;
   } catch {}
 }
 
@@ -295,14 +354,37 @@ function resetAllFilters() {
   els.sortFilter.value = 'newest';
   els.sourceFilter.value = 'all';
   els.searchInput.value = '';
-  els.dateFrom.value = '';
-  els.dateTo.value = '';
   els.minReactions.value = '';
   els.minComments.value = '';
   els.hasImageOnly.checked = false;
   els.highEngagementOnly.checked = false;
+  // إعادة تعيين التاريخ لآخر 24 ساعة
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  els.dateFrom.value = formatDateInput(yesterday);
+  els.dateTo.value = formatDateInput(now);
   applyFilters();
   showToast('تم إعادة تعيين الفلاتر', 'success');
+}
+
+function applyQuickRange(range) {
+  const now = new Date();
+  els.dateTo.value = formatDateInput(now);
+  let from;
+  switch (range) {
+    case '24h': from = new Date(now.getTime() - 24 * 60 * 60 * 1000); break;
+    case '7d':  from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+    case '30d': from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
+    case 'all':
+      els.dateFrom.value = '';
+      els.dateTo.value = '';
+      applyFilters();
+      return;
+  }
+  els.dateFrom.value = formatDateInput(from);
+  applyFilters();
+  document.querySelectorAll('.btn-quick-range').forEach(b =>
+    b.classList.toggle('active', b.dataset.range === range));
 }
 
 // ========= Render =========
@@ -445,6 +527,25 @@ function formatTime(timestampText, iso) {
   return '';
 }
 
+function formatDuration(seconds) {
+  if (!seconds || seconds < 0) return '—';
+  const min = Math.floor(seconds / 60);
+  const sec = seconds % 60;
+  if (min < 1) return `${sec}s`;
+  return `${min}m ${sec}s`;
+}
+
+function formatRelTime(iso) {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMin = Math.round((now - date) / 60000);
+  if (diffMin < 1) return 'الآن';
+  if (diffMin < 60) return `قبل ${diffMin} د`;
+  if (diffMin < 1440) return `قبل ${Math.round(diffMin / 60)} س`;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
 function slugify(text) {
   return String(text || '')
     .trim().toLowerCase()
@@ -462,10 +563,12 @@ function showToast(msg, type = '') {
   setTimeout(() => toast.remove(), 3000);
 }
 
-function openModal(title, bodyHtml) {
+function openModal(title, bodyHtml, size = '') {
   els.modalTitle.textContent = title;
   els.modalBody.innerHTML = bodyHtml;
   els.modal.classList.add('active');
+  const modalEl = els.modal.querySelector('.modal');
+  modalEl.classList.toggle('modal-lg', size === 'lg');
   document.body.style.overflow = 'hidden';
 }
 
@@ -512,48 +615,49 @@ function openTriggerModal() {
   const info = detectRepoInfo();
   openModal('🚀 تشغيل سحب جديد', `
     <div class="modal-instructions">
-      <h3>⚡ تشغيل سريع من GitHub</h3>
-      <ol>
-        <li>افتح <a href="${info.actionsUrl}" target="_blank" rel="noopener">صفحة Actions</a></li>
-        <li>اختر "Marsad · Scrape Facebook Pages"</li>
-        <li>اضغط "Run workflow"</li>
-      </ol>
+      <div class="quick-action">
+        <h3>🔑 الطريقة الأسهل (من هنا)</h3>
+        <p>الصق GitHub Personal Access Token بصلاحية <code>repo</code>:</p>
+        <p class="small-note">ما عندك Token؟ <a href="https://github.com/settings/tokens/new?scopes=repo&description=marsad-trigger" target="_blank" rel="noopener">أنشئ واحد الآن</a></p>
 
-      <h3>🔑 تشغيل من هنا (يحتاج Token)</h3>
-      <p>أنشئ <a href="https://github.com/settings/tokens/new?scopes=repo&description=marsad-trigger" target="_blank" rel="noopener">Personal Access Token</a> بصلاحية <code>repo</code>:</p>
-      <input type="password" id="ghToken" class="input" placeholder="ghp_..." style="margin:8px 0;">
+        <input type="password" id="ghToken" class="input" placeholder="ghp_..." dir="ltr">
 
-      <div class="form-row" style="margin-top:8px;">
-        <label class="filter-label">سحب صفحة محددة (اختياري)</label>
-        <select id="runSlugSelect" class="select">
-          <option value="">كل الصفحات</option>
-          ${STATE.pagesConfig.map(p =>
-            `<option value="${escapeHtml(p.slug)}">${escapeHtml(p.name)}</option>`
-          ).join('')}
-        </select>
+        <div class="form-row" style="margin-top:10px">
+          <label class="filter-label">سحب صفحة محددة (اختياري)</label>
+          <select id="runSlugSelect" class="select">
+            <option value="">كل الصفحات</option>
+            ${STATE.pagesConfig.map(p =>
+              `<option value="${escapeHtml(p.slug)}">${escapeHtml(p.name)}</option>`
+            ).join('')}
+          </select>
+        </div>
+
+        <div class="form-row" style="margin-top:8px">
+          <label class="filter-label">إجبار مصدر (اختياري)</label>
+          <select id="runSourceSelect" class="select">
+            <option value="">تلقائي</option>
+            <option value="apify">💎 Apify</option>
+            <option value="fetchrss">🪶 FetchRSS</option>
+            <option value="rssapp">⚡ RSS.app</option>
+            <option value="rsshub">🏠 RSSHub</option>
+            <option value="playwright">🎭 Playwright</option>
+          </select>
+        </div>
+
+        <button class="btn-trigger btn-full" id="runWorkflowBtn" style="margin-top:14px">
+          🚀 تشغيل الآن
+        </button>
+        <p class="note">⏱️ السحب يستغرق 3-5 دقائق. الصفحة تحدّث تلقائياً بعدها.</p>
       </div>
 
-      <div class="form-row" style="margin-top:8px;">
-        <label class="filter-label">إجبار مصدر (اختياري)</label>
-        <select id="runSourceSelect" class="select">
-          <option value="">تلقائي (من config.yml)</option>
-          <option value="apify">💎 Apify</option>
-          <option value="fetchrss">🪶 FetchRSS</option>
-          <option value="rssapp">⚡ RSS.app</option>
-          <option value="rsshub">🏠 RSSHub</option>
-          <option value="playwright">🎭 Playwright</option>
-        </select>
-      </div>
-
-      <button class="btn-trigger btn-full" id="runWorkflowBtn" style="margin-top:1rem">
-        تشغيل الـ Workflow الآن
-      </button>
-
-      <p class="note">⏱️ السحب يستغرق 3-5 دقائق. حدّث الصفحة بعدها.</p>
+      <details class="alt-method">
+        <summary>🔗 طرق بديلة</summary>
+        <p style="margin-top:10px">يدوياً من GitHub: <a href="${info.actionsUrl}" target="_blank" rel="noopener">فتح Actions</a> → "Run workflow"</p>
+        <p>جدول تلقائي: يشتغل كل 6 ساعات من GitHub Actions</p>
+      </details>
     </div>
   `);
 
-  // استرجاع التوكن المحفوظ
   const tokenInput = document.getElementById('ghToken');
   try {
     const saved = localStorage.getItem(LS.token);
@@ -588,6 +692,7 @@ function detectRepoInfo() {
     actionsUrl: `https://github.com/${owner}/${repo}/actions`,
     apiUrl: `https://api.github.com/repos/${owner}/${repo}/actions/workflows/scrape.yml/dispatches`,
     contentsUrl: `https://api.github.com/repos/${owner}/${repo}/contents/pages.json`,
+    runsUrl: `https://api.github.com/repos/${owner}/${repo}/actions/runs`,
   };
 }
 
@@ -599,7 +704,6 @@ async function triggerWorkflow(repoInfo, token, inputs) {
 
   try {
     const body = { ref: 'main' };
-    // أضف inputs لو فيها قيم
     const cleanInputs = {};
     if (inputs.page_slug) cleanInputs.page_slug = inputs.page_slug;
     if (inputs.force_source) cleanInputs.force_source = inputs.force_source;
@@ -616,9 +720,11 @@ async function triggerWorkflow(repoInfo, token, inputs) {
     });
 
     if (res.status === 204) {
-      showToast('✅ تم بدء السحب! انتظر 3-5 دقائق ثم حدّث', 'success');
+      showToast('✅ تم بدء السحب! انتظر 3-5 دقائق', 'success');
       closeModal();
       try { localStorage.setItem(LS.token, token); } catch {}
+      // ابدأ polling فوراً
+      setTimeout(pollLiveRuns, 2000);
     } else {
       const err = await res.json().catch(() => ({}));
       showToast(`فشل: ${err.message || res.status}`, 'error');
@@ -628,6 +734,376 @@ async function triggerWorkflow(repoInfo, token, inputs) {
   }
 }
 
+// ========= History Modal =========
+
+async function openHistoryModal() {
+  const token = (() => { try { return localStorage.getItem(LS.token); } catch { return null; } })();
+  const info = detectRepoInfo();
+
+  openModal('🕐 سجل العمليات', `
+    <div class="history-loading">
+      <div class="spinner"></div>
+      <p>جاري تحميل السجل…</p>
+    </div>
+  `, 'lg');
+
+  let githubRuns = [];
+  if (token) {
+    try {
+      const res = await fetch(`${info.runsUrl}?per_page=20`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json',
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        githubRuns = data.workflow_runs || [];
+      }
+    } catch {}
+  }
+
+  renderHistory(githubRuns, token, info);
+}
+
+function renderHistory(githubRuns, token, info) {
+  const hasToken = !!token;
+  const live = githubRuns.filter(r => ['queued', 'in_progress'].includes(r.status));
+  const recent = githubRuns.filter(r => r.status === 'completed').slice(0, 10);
+
+  const html = `
+    <div class="history-wrapper">
+      ${!hasToken ? `
+        <div class="note note-info">
+          💡 لعرض السجل الحيّ من GitHub، الصق Personal Access Token من زر "سحب الآن" أولاً.
+        </div>
+      ` : ''}
+
+      ${live.length ? `
+        <div class="history-section">
+          <h3>🔴 قيد التنفيذ (${live.length})</h3>
+          ${live.map(r => renderRunRow(r, true)).join('')}
+        </div>
+      ` : ''}
+
+      ${recent.length ? `
+        <div class="history-section">
+          <h3>✅ آخر التشغيلات</h3>
+          ${recent.map(r => renderRunRow(r, false)).join('')}
+        </div>
+      ` : (STATE.history.length ? `
+        <div class="history-section">
+          <h3>📂 السجل المحلي (من history.json)</h3>
+          ${STATE.history.map(r => renderLocalRunRow(r)).join('')}
+        </div>
+      ` : `
+        <div class="note-empty">لا توجد تشغيلات بعد</div>
+      `)}
+
+      <div class="history-footer">
+        <a href="${info.actionsUrl}" target="_blank" rel="noopener" class="btn-refresh btn-sm">
+          عرض كل التشغيلات على GitHub ↗
+        </a>
+      </div>
+    </div>
+  `;
+
+  els.modalBody.innerHTML = html;
+}
+
+function renderRunRow(r, isLive) {
+  const statusColor = {
+    success: 'success', failure: 'error', cancelled: 'muted',
+    queued: 'warn', in_progress: 'warn',
+  }[r.conclusion || r.status] || 'muted';
+
+  const statusLabel = {
+    success: '✅ نجح',
+    failure: '❌ فشل',
+    cancelled: '⏹️ ملغي',
+    queued: '⏳ في الطابور',
+    in_progress: '🔄 يعمل',
+  }[r.conclusion || r.status] || r.status;
+
+  const duration = r.run_started_at && r.updated_at
+    ? Math.round((new Date(r.updated_at) - new Date(r.run_started_at)) / 1000)
+    : null;
+
+  return `
+    <div class="run-row">
+      <div class="run-row-head">
+        <span class="run-status ${statusColor}">${statusLabel}</span>
+        <span class="run-trigger">${r.event === 'schedule' ? '⏰ مجدول' : r.event === 'workflow_dispatch' ? '👤 يدوي' : r.event}</span>
+        <span class="run-time">${formatRelTime(r.run_started_at || r.created_at)}</span>
+      </div>
+      <div class="run-row-body">
+        <strong>#${r.run_number}</strong> · ${escapeHtml(r.display_title || r.name || 'سحب')}
+        ${duration ? ` · ⏱️ ${formatDuration(duration)}` : ''}
+        ${isLive ? ` · <span class="live-dot-inline"></span>` : ''}
+      </div>
+      <div class="run-row-actions">
+        <a href="${r.html_url}" target="_blank" rel="noopener" class="run-link">تفاصيل ↗</a>
+      </div>
+    </div>
+  `;
+}
+
+function renderLocalRunRow(r) {
+  const statusColor = r.status === 'success' ? 'success' : 'error';
+  const statusLabel = r.status === 'success' ? '✅ نجح' : '❌ فشل';
+  return `
+    <div class="run-row">
+      <div class="run-row-head">
+        <span class="run-status ${statusColor}">${statusLabel}</span>
+        <span class="run-trigger">${r.trigger === 'schedule' ? '⏰ مجدول' : '👤 يدوي'}</span>
+        <span class="run-time">${formatRelTime(r.started_at)}</span>
+      </div>
+      <div class="run-row-body">
+        <strong>${r.run_id}</strong>
+        · ${r.pages_success}/${r.pages_total} صفحة
+        · <strong>${r.new_posts}</strong> منشور جديد
+        · ⏱️ ${formatDuration(r.duration_seconds)}
+        · المصادر: ${(r.sources_used || []).join(', ')}
+      </div>
+    </div>
+  `;
+}
+
+// ========= Setup Wizard (Simplified) =========
+
+function openSetupWizard() {
+  openModal('🚀 بدء سريع', `
+    <div class="setup-wizard-v2">
+      <div class="setup-tabs">
+        <button class="setup-tab active" data-tab="quick">⚡ ربط سريع</button>
+        <button class="setup-tab" data-tab="sources">📚 المصادر</button>
+      </div>
+
+      <div class="setup-tab-content" id="tabQuick">
+        ${renderQuickSetup()}
+      </div>
+
+      <div class="setup-tab-content" id="tabSources" hidden>
+        ${renderSourcesGuide()}
+      </div>
+    </div>
+  `, 'lg');
+
+  // Tab switching
+  document.querySelectorAll('.setup-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.setup-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const target = tab.dataset.tab;
+      document.getElementById('tabQuick').hidden = target !== 'quick';
+      document.getElementById('tabSources').hidden = target !== 'sources';
+    });
+  });
+
+  // Quick setup actions
+  bindQuickSetupEvents();
+}
+
+function renderQuickSetup() {
+  return `
+    <div class="quick-setup-steps">
+      <div class="quick-step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h3>فعّل GitHub Pages + Actions</h3>
+          <p>افتح إعدادات الريبو واضبط:</p>
+          <ul class="mini-list">
+            <li>Settings → Pages → Source: <strong>GitHub Actions</strong></li>
+            <li>Settings → Actions → Workflow permissions: <strong>Read and write</strong></li>
+          </ul>
+          <a href="https://github.com/AsemAbbas/facebook_scraper/settings/pages" target="_blank" rel="noopener" class="btn-refresh btn-sm">فتح إعدادات Pages ↗</a>
+        </div>
+      </div>
+
+      <div class="quick-step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h3>أضف Token للتشغيل من الواجهة</h3>
+          <p>Personal Access Token بصلاحية <code>repo</code> لتشغيل السحب من هذه الصفحة:</p>
+          <input type="password" id="quickToken" class="input" placeholder="ghp_..." dir="ltr">
+          <div class="action-row">
+            <a href="https://github.com/settings/tokens/new?scopes=repo&description=marsad" target="_blank" rel="noopener" class="btn-refresh btn-sm">إنشاء Token جديد ↗</a>
+            <button class="btn-trigger btn-sm" id="saveTokenBtn">حفظ التوكن</button>
+          </div>
+          <p class="small-note" id="tokenStatus"></p>
+        </div>
+      </div>
+
+      <div class="quick-step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h3>اختر مصدر واحد (بس)</h3>
+          <p>الأبسط: <strong>Playwright</strong> (بدون إعداد) للتجربة.</p>
+          <p>للإنتاج: <strong>Apify</strong> ($49/شهر) أو <strong>FetchRSS</strong> ($9.95/شهر).</p>
+          <div class="quick-source-grid">
+            <button class="quick-source" data-src="playwright">
+              <span>🎭</span> Playwright <em>مجاني</em>
+            </button>
+            <button class="quick-source" data-src="apify">
+              <span>💎</span> Apify <em>$49</em>
+            </button>
+            <button class="quick-source" data-src="fetchrss">
+              <span>🪶</span> FetchRSS <em>$9.95</em>
+            </button>
+          </div>
+          <div id="sourceQuickGuide"></div>
+        </div>
+      </div>
+
+      <div class="quick-step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h3>أضف الصفحات وشغّل</h3>
+          <p>من الرأس: اضغط زر 📄 (إدارة الصفحات)، ثم زر ▶️ (سحب الآن).</p>
+          <div class="action-row">
+            <button class="btn-refresh btn-sm" id="gotoPages">📄 فتح إدارة الصفحات</button>
+            <button class="btn-trigger btn-sm" id="gotoTrigger">▶️ سحب الآن</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindQuickSetupEvents() {
+  // Token save
+  const tokenInput = document.getElementById('quickToken');
+  const tokenStatus = document.getElementById('tokenStatus');
+  try {
+    const saved = localStorage.getItem(LS.token);
+    if (saved) {
+      tokenInput.value = saved;
+      tokenStatus.innerHTML = '✅ Token محفوظ مسبقاً';
+      tokenStatus.style.color = 'var(--success)';
+    }
+  } catch {}
+
+  document.getElementById('saveTokenBtn').addEventListener('click', async () => {
+    const t = tokenInput.value.trim();
+    if (!t) {
+      showToast('الصق التوكن أولاً', 'error');
+      return;
+    }
+    // Validate
+    try {
+      const res = await fetch('https://api.github.com/user', {
+        headers: { Authorization: `Bearer ${t}` },
+      });
+      if (!res.ok) {
+        showToast('Token غير صالح', 'error');
+        tokenStatus.innerHTML = '❌ Token غير صالح';
+        tokenStatus.style.color = 'var(--danger)';
+        return;
+      }
+      const user = await res.json();
+      localStorage.setItem(LS.token, t);
+      tokenStatus.innerHTML = `✅ محفوظ · مرحباً ${user.login}`;
+      tokenStatus.style.color = 'var(--success)';
+      showToast('تم حفظ Token بنجاح', 'success');
+    } catch (e) {
+      showToast(`خطأ: ${e.message}`, 'error');
+    }
+  });
+
+  // Quick source selection
+  document.querySelectorAll('.quick-source').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.quick-source').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      const src = btn.dataset.src;
+      document.getElementById('sourceQuickGuide').innerHTML = QUICK_GUIDES[src] || '';
+    });
+  });
+
+  // Goto shortcuts
+  document.getElementById('gotoPages').addEventListener('click', () => {
+    closeModal();
+    setTimeout(() => openPagesModal(), 250);
+  });
+  document.getElementById('gotoTrigger').addEventListener('click', () => {
+    closeModal();
+    setTimeout(() => openTriggerModal(), 250);
+  });
+}
+
+const QUICK_GUIDES = {
+  playwright: `
+    <div class="source-quick-info">
+      <h4>🎭 Playwright - خطوة واحدة</h4>
+      <ol class="mini-list">
+        <li>افتح <code>config.yml</code> في الريبو</li>
+        <li>تأكد إن: <code>playwright → enabled: true</code></li>
+        <li>خلاص! شغّل السحب.</li>
+      </ol>
+      <p class="small-note">⚠️ نسبة نجاح 40-60% فقط. للتجربة فقط.</p>
+    </div>
+  `,
+  apify: `
+    <div class="source-quick-info">
+      <h4>💎 Apify - 3 خطوات</h4>
+      <ol class="mini-list">
+        <li>سجّل في <a href="https://apify.com/sign-up" target="_blank" rel="noopener">apify.com</a></li>
+        <li>انسخ API Token من <a href="https://console.apify.com/account/integrations" target="_blank" rel="noopener">Integrations</a></li>
+        <li>أضف كـ GitHub Secret باسم <code>APIFY_TOKEN</code> <a href="https://github.com/AsemAbbas/facebook_scraper/settings/secrets/actions/new" target="_blank" rel="noopener">↗ هنا</a></li>
+      </ol>
+      <p class="small-note">✅ الأعلى جودة · $5 مجاناً للتجربة</p>
+    </div>
+  `,
+  fetchrss: `
+    <div class="source-quick-info">
+      <h4>🪶 FetchRSS - 3 خطوات</h4>
+      <ol class="mini-list">
+        <li>سجّل في <a href="https://fetchrss.com" target="_blank" rel="noopener">fetchrss.com</a> + اشترك Advanced</li>
+        <li>أنشئ feed لكل صفحة → انسخ RSS URL</li>
+        <li>في "إدارة الصفحات": الصق RSS URL كـ page URL واختر <code>fetchrss</code></li>
+      </ol>
+      <p class="small-note">⚠️ بدون تفاعلات · تحديث كل 3-6 ساعات</p>
+    </div>
+  `,
+};
+
+function renderSourcesGuide() {
+  return `
+    <div class="source-picker">
+      <button class="source-card" data-source="apify">
+        <span class="source-icon">💎</span>
+        <strong>Apify</strong>
+        <span class="price">$49/شهر</span>
+        <span class="badge-best">الأفضل</span>
+      </button>
+      <button class="source-card" data-source="fetchrss">
+        <span class="source-icon">🪶</span>
+        <strong>FetchRSS</strong>
+        <span class="price">$9.95/شهر</span>
+        <span class="badge-cheap">الأرخص</span>
+      </button>
+      <button class="source-card" data-source="rssapp">
+        <span class="source-icon">⚡</span>
+        <strong>RSS.app</strong>
+        <span class="price">$16.64/شهر</span>
+      </button>
+      <button class="source-card" data-source="rsshub">
+        <span class="source-icon">🏠</span>
+        <strong>RSSHub</strong>
+        <span class="price">مجاني/~$4</span>
+        <span class="badge-free">مفتوح</span>
+      </button>
+      <button class="source-card" data-source="playwright">
+        <span class="source-icon">🎭</span>
+        <strong>Playwright</strong>
+        <span class="price">مجاني</span>
+        <span class="badge-warn">تجريبي</span>
+      </button>
+    </div>
+    <div class="setup-steps" id="setupSteps"></div>
+  `;
+}
+
 // ========= Pages Management =========
 
 function openPagesModal() {
@@ -635,13 +1111,8 @@ function openPagesModal() {
   openModal('📄 إدارة الصفحات', `
     <div class="pages-manager">
       <div class="pages-toolbar">
-        <button class="btn-trigger btn-sm" id="addPageBtn" type="button">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-          إضافة صفحة
-        </button>
-        <button class="btn-refresh btn-sm" id="exportPagesJson" type="button">تصدير pages.json</button>
+        <button class="btn-trigger btn-sm" id="addPageBtn" type="button">+ إضافة صفحة</button>
+        <button class="btn-refresh btn-sm" id="exportPagesJson" type="button">تصدير</button>
         <button class="btn-refresh btn-sm" id="importPagesJson" type="button">استيراد</button>
       </div>
 
@@ -652,15 +1123,15 @@ function openPagesModal() {
       </div>
 
       <div class="pages-footer">
-        <button class="btn-trigger" id="savePagesLocal" type="button">حفظ محلياً (localStorage)</button>
-        <button class="btn-refresh" id="savePagesGitHub" type="button">حفظ في GitHub (يحتاج Token)</button>
+        <button class="btn-trigger" id="savePagesLocal" type="button">حفظ محلياً</button>
+        <button class="btn-refresh" id="savePagesGitHub" type="button">💾 حفظ في GitHub</button>
       </div>
 
       <p class="note">
-        <strong>ملاحظة:</strong> بعد حفظ الصفحات يجب تشغيل workflow السحب حتى تظهر المنشورات الجديدة.
+        <strong>ملاحظة:</strong> بعد الحفظ، شغّل سحب جديد من زر "سحب الآن".
       </p>
     </div>
-  `);
+  `, 'lg');
 
   bindPagesManagerEvents();
 }
@@ -719,15 +1190,12 @@ function renderPageRow(page, index) {
 
 function bindPagesManagerEvents() {
   document.getElementById('addPageBtn').addEventListener('click', () => {
+    syncPagesFromUI();
     STATE.pagesConfig.push({
-      slug: '',
-      name: '',
-      url: '',
-      max_posts: 30,
-      source: 'auto',
-      enabled: true,
+      slug: '', name: '', url: '',
+      max_posts: 30, source: 'auto', enabled: true,
     });
-    openPagesModal(); // re-render
+    openPagesModal();
   });
 
   document.querySelectorAll('.page-delete').forEach(btn => {
@@ -818,11 +1286,10 @@ function syncPagesFromUI() {
 async function saveToGitHub() {
   const token = localStorage.getItem(LS.token) || prompt('الصق GitHub Personal Access Token (صلاحية repo):');
   if (!token) {
-    showToast('توكن مطلوب للحفظ على GitHub', 'error');
+    showToast('توكن مطلوب', 'error');
     return;
   }
 
-  // فلترة الـ _help من الإخراج
   const clean = STATE.pagesConfig.map(p => {
     const c = { ...p };
     delete c._help;
@@ -833,7 +1300,6 @@ async function saveToGitHub() {
   const content = JSON.stringify({ pages: clean }, null, 2);
 
   try {
-    // اجلب SHA الحالي للملف
     const getRes = await fetch(info.contentsUrl, {
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -845,8 +1311,6 @@ async function saveToGitHub() {
       return;
     }
     const current = await getRes.json();
-
-    // Base64 encode مع دعم Unicode
     const b64 = btoa(unescape(encodeURIComponent(content)));
 
     const putRes = await fetch(info.contentsUrl, {
@@ -877,132 +1341,13 @@ async function saveToGitHub() {
   }
 }
 
-// ========= Setup Wizard =========
-
-function openSetupWizard() {
-  openModal('📚 دليل الإعداد', `
-    <div class="setup-wizard">
-      <p class="wizard-intro">اختر المصدر المناسب وشوف خطوات إعداده:</p>
-
-      <div class="source-picker">
-        <button class="source-card" data-source="apify">
-          <span class="source-icon">💎</span>
-          <strong>Apify</strong>
-          <span class="price">$49/شهر</span>
-          <span class="badge-best">الأفضل</span>
-        </button>
-        <button class="source-card" data-source="fetchrss">
-          <span class="source-icon">🪶</span>
-          <strong>FetchRSS</strong>
-          <span class="price">$9.95/شهر</span>
-          <span class="badge-cheap">الأرخص</span>
-        </button>
-        <button class="source-card" data-source="rssapp">
-          <span class="source-icon">⚡</span>
-          <strong>RSS.app</strong>
-          <span class="price">$16.64/شهر</span>
-        </button>
-        <button class="source-card" data-source="rsshub">
-          <span class="source-icon">🏠</span>
-          <strong>RSSHub</strong>
-          <span class="price">مجاني/~$4</span>
-          <span class="badge-free">مفتوح المصدر</span>
-        </button>
-        <button class="source-card" data-source="playwright">
-          <span class="source-icon">🎭</span>
-          <strong>Playwright</strong>
-          <span class="price">مجاني</span>
-          <span class="badge-warn">غير موثوق</span>
-        </button>
-      </div>
-
-      <div class="setup-steps" id="setupSteps"></div>
-    </div>
-  `);
-
-  document.querySelectorAll('.source-card').forEach(card => {
-    card.addEventListener('click', () => {
-      document.querySelectorAll('.source-card').forEach(c => c.classList.remove('active'));
-      card.classList.add('active');
-      renderSetupSteps(card.dataset.source);
-    });
-  });
-}
-
-function renderSetupSteps(source) {
-  const container = document.getElementById('setupSteps');
-  const steps = SETUP_GUIDES[source] || [];
-  container.innerHTML = `
-    <h3>${SETUP_TITLES[source]}</h3>
-    <ol class="step-list">
-      ${steps.map(s => `<li>${s}</li>`).join('')}
-    </ol>
-    <div class="setup-footer">
-      <p><strong>📖 دليل مفصّل:</strong> <a href="https://github.com/AsemAbbas/facebook_scraper/blob/main/README.md" target="_blank" rel="noopener">README على GitHub</a></p>
-    </div>
-  `;
-}
-
-const SETUP_TITLES = {
-  apify: '💎 إعداد Apify (الأفضل موثوقية)',
-  fetchrss: '🪶 إعداد FetchRSS (الأرخص)',
-  rssapp: '⚡ إعداد RSS.app',
-  rsshub: '🏠 إعداد RSSHub (self-hosted)',
-  playwright: '🎭 إعداد Playwright (للتجربة)',
-};
-
-const SETUP_GUIDES = {
-  apify: [
-    'سجّل في <a href="https://apify.com" target="_blank" rel="noopener">apify.com</a> (مجاني ابتداءً)',
-    'من <a href="https://console.apify.com/account/integrations" target="_blank" rel="noopener">Console → Integrations</a>، انسخ الـ API token',
-    'اذهب لـ GitHub repo → Settings → Secrets → New secret → باسم <code>APIFY_TOKEN</code>',
-    'عدّل <code>config.yml</code>: <code>sources → apify → enabled: true</code>',
-    'في <code>pages.json</code>: اترك <code>source: "auto"</code> أو حدّد <code>"apify"</code>',
-    'شغّل workflow من زر "سحب الآن" → اختر Apify كمصدر',
-  ],
-  fetchrss: [
-    'سجّل في <a href="https://fetchrss.com" target="_blank" rel="noopener">fetchrss.com</a>',
-    'اشترك في خطة <strong>Advanced ($9.95/شهر)</strong> - 100 feed',
-    'لكل صفحة فيسبوك: لوحة التحكم → Create feed → الصق رابط الصفحة',
-    'بعد إنشاء الـ feed، انسخ RSS URL (شكلها: <code>fetchrss.com/rss/XXX.xml</code>)',
-    'في <code>pages.json</code>: الصق RSS URL في حقل <code>url</code> بدل Facebook URL',
-    'في <code>config.yml</code>: <code>sources → fetchrss → enabled: true</code>',
-    '<strong>تنبيه:</strong> FetchRSS يُحدّث feeds فيسبوك كل 3-6 ساعات (قيد من فيسبوك)',
-  ],
-  rssapp: [
-    'سجّل في <a href="https://rss.app" target="_blank" rel="noopener">rss.app</a>',
-    'اشترك في <strong>Developer ($16.64/شهر)</strong> - 100 feed، تحديث أسرع',
-    'من لوحة التحكم → Create feed → Facebook',
-    'انسخ RSS URL (شكلها: <code>rss.app/feeds/XXX.xml</code>)',
-    'في <code>pages.json</code>: الصق RSS URL في حقل <code>url</code>',
-    'في <code>config.yml</code>: <code>sources → rssapp → enabled: true</code>',
-  ],
-  rsshub: [
-    '<strong>خيار 1 - مجاني:</strong> استخدم <a href="https://rsshub.app" target="_blank" rel="noopener">rsshub.app</a> العامة (بطيئة ومحدودة)',
-    '<strong>خيار 2 - VPS:</strong> استأجر Hetzner CX11 بـ <em>€4/شهر</em>',
-    'على الـ VPS: <code>docker run -d -p 1200:1200 diygod/rsshub</code>',
-    'في <code>config.yml</code>: <code>base_url: http://your-vps:1200</code>',
-    'في <code>pages.json</code>: احتفظ بـ Facebook URL الأصلي (RSSHub يحولها تلقائياً)',
-    '<strong>ميزة:</strong> مفتوح المصدر، بدون حدود على عدد الصفحات',
-  ],
-  playwright: [
-    'ما يحتاج أي حساب/اشتراك - مجاني 100%',
-    'في <code>config.yml</code>: <code>sources → playwright → enabled: true</code>',
-    'GitHub Actions راح يثبّت Chromium تلقائياً عند التشغيل',
-    '<strong>تنبيه مهم:</strong> فيسبوك بيكشف GitHub IPs بسرعة',
-    'نسبة الفشل المتوقعة: <strong>40-60%</strong>',
-    'مناسب فقط: للتجربة، 1-3 صفحات، فترات متباعدة',
-    'للإنتاج الحقيقي: استخدم Apify أو FetchRSS',
-  ],
-};
-
 // ========= Listeners =========
 
 function setupListeners() {
-  // filters
+  // Filters
   els.pageFilter.addEventListener('change', applyFilters);
-  els.sortFilter.addEventListener('change', applyFilters);
   els.sourceFilter.addEventListener('change', applyFilters);
+  els.sortFilter.addEventListener('change', applyFilters);
   els.searchInput.addEventListener('input', debounce(applyFilters, 300));
   els.dateFrom.addEventListener('change', applyFilters);
   els.dateTo.addEventListener('change', applyFilters);
@@ -1010,24 +1355,22 @@ function setupListeners() {
   els.minComments.addEventListener('input', debounce(applyFilters, 300));
   els.hasImageOnly.addEventListener('change', applyFilters);
   els.highEngagementOnly.addEventListener('change', applyFilters);
-
-  // toggle advanced
-  els.toggleAdvanced.addEventListener('click', () => {
-    els.advancedFilters.hidden = !els.advancedFilters.hidden;
-    els.toggleAdvanced.classList.toggle('active', !els.advancedFilters.hidden);
-    saveFilters();
-  });
-
-  // reset
   els.resetFilters.addEventListener('click', resetAllFilters);
 
-  // buttons
+  // Quick range buttons
+  document.querySelectorAll('.btn-quick-range').forEach(btn => {
+    btn.addEventListener('click', () => applyQuickRange(btn.dataset.range));
+  });
+
+  // Actions
   els.exportBtn.addEventListener('click', exportCSV);
   els.refreshBtn.addEventListener('click', async () => {
     els.refreshBtn.disabled = true;
     await loadIndex();
     await loadAllPages();
+    await loadHistory();
     applyFilters();
+    pollLiveRuns();
     els.refreshBtn.disabled = false;
     showToast('تم تحديث البيانات', 'success');
   });
@@ -1035,14 +1378,14 @@ function setupListeners() {
   els.triggerBtn.addEventListener('click', openTriggerModal);
   els.setupBtn.addEventListener('click', openSetupWizard);
   els.managePagesBtn.addEventListener('click', openPagesModal);
+  els.historyBtn.addEventListener('click', openHistoryModal);
 
-  // modal
+  // Modal
   els.modalClose.addEventListener('click', closeModal);
   els.modal.addEventListener('click', (e) => {
     if (e.target === els.modal) closeModal();
   });
 
-  // keyboard
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && els.modal.classList.contains('active')) {
       closeModal();

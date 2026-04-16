@@ -18,6 +18,15 @@
   <div class="circle c2"></div>
 </div>
 
+<!-- شريط العمليات الحية (يظهر فقط لو في workflow شغال) -->
+<div class="live-status-banner" id="liveStatusBanner" hidden>
+  <div class="live-status-inner">
+    <span class="live-dot"></span>
+    <span id="liveStatusText">يوجد عملية سحب قيد التنفيذ…</span>
+    <a href="#" id="liveStatusLink" target="_blank" rel="noopener">عرض التفاصيل ↗</a>
+  </div>
+</div>
+
 <!-- الرأس -->
 <header class="header">
   <div class="header-inner">
@@ -40,6 +49,11 @@
       <button class="btn-icon" id="setupBtn" title="دليل الإعداد">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </button>
+      <button class="btn-icon" id="historyBtn" title="سجل العمليات">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>
         </svg>
       </button>
       <button class="btn-icon" id="managePagesBtn" title="إدارة الصفحات">
@@ -83,12 +97,23 @@
   </div>
 </section>
 
-<!-- شريط التحكم الأساسي -->
+<!-- كل الفلاتر - ظاهرة دائماً -->
 <section class="controls">
   <div class="filter-group">
     <label class="filter-label">الصفحة</label>
     <select id="pageFilter" class="select">
       <option value="all">كل الصفحات</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label class="filter-label">المصدر</label>
+    <select id="sourceFilter" class="select">
+      <option value="all">كل المصادر</option>
+      <option value="apify">💎 Apify</option>
+      <option value="fetchrss">🪶 FetchRSS</option>
+      <option value="rssapp">⚡ RSS.app</option>
+      <option value="rsshub">🏠 RSSHub</option>
+      <option value="playwright">🎭 Playwright</option>
     </select>
   </div>
   <div class="filter-group">
@@ -105,27 +130,9 @@
     <label class="filter-label">بحث في النصوص</label>
     <input type="text" id="searchInput" class="input" placeholder="ابحث…">
   </div>
-  <div class="filter-group">
-    <label class="filter-label">المصدر</label>
-    <select id="sourceFilter" class="select">
-      <option value="all">كل المصادر</option>
-      <option value="apify">💎 Apify</option>
-      <option value="fetchrss">🪶 FetchRSS</option>
-      <option value="rssapp">⚡ RSS.app</option>
-      <option value="rsshub">🏠 RSSHub</option>
-      <option value="playwright">🎭 Playwright</option>
-    </select>
-  </div>
-  <button class="btn-toggle-advanced" id="toggleAdvanced" type="button">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
-    </svg>
-    <span>فلاتر متقدمة</span>
-  </button>
 </section>
 
-<!-- الفلاتر المتقدمة (مخفية افتراضياً) -->
-<section class="advanced-filters" id="advancedFilters" hidden>
+<section class="controls advanced-row">
   <div class="filter-group">
     <label class="filter-label">من تاريخ</label>
     <input type="date" id="dateFrom" class="input">
@@ -135,34 +142,39 @@
     <input type="date" id="dateTo" class="input">
   </div>
   <div class="filter-group">
-    <label class="filter-label">الحد الأدنى للتفاعل</label>
+    <label class="filter-label">الحد الأدنى تفاعل</label>
     <input type="number" id="minReactions" class="input" placeholder="0" min="0">
   </div>
   <div class="filter-group">
-    <label class="filter-label">الحد الأدنى للتعليقات</label>
+    <label class="filter-label">الحد الأدنى تعليقات</label>
     <input type="number" id="minComments" class="input" placeholder="0" min="0">
   </div>
   <div class="filter-group">
-    <label class="filter-label">خيارات</label>
+    <label class="filter-label">فلاتر سريعة</label>
     <div class="filter-checkboxes">
       <label class="checkbox-chip">
         <input type="checkbox" id="hasImageOnly">
-        <span>بصور فقط</span>
+        <span>🖼 بصور</span>
       </label>
       <label class="checkbox-chip">
         <input type="checkbox" id="highEngagementOnly">
-        <span>تفاعل عالٍ</span>
+        <span>🔥 عالي</span>
       </label>
     </div>
   </div>
   <div class="filter-group">
-    <label class="filter-label">&nbsp;</label>
-    <button class="btn-reset-filters" id="resetFilters" type="button">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-      </svg>
-      إعادة تعيين
-    </button>
+    <label class="filter-label">إجراءات</label>
+    <div class="filter-action-buttons">
+      <button class="btn-quick-range" data-range="24h" title="آخر 24 ساعة">24س</button>
+      <button class="btn-quick-range" data-range="7d" title="آخر أسبوع">7أ</button>
+      <button class="btn-quick-range" data-range="30d" title="آخر شهر">30ي</button>
+      <button class="btn-quick-range" data-range="all" title="كل الفترات">كل</button>
+      <button class="btn-reset-filters" id="resetFilters" type="button" title="إعادة تعيين">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+        </svg>
+      </button>
+    </div>
   </div>
 </section>
 
@@ -189,10 +201,69 @@
   </div>
 </main>
 
-<!-- التذييل -->
+<!-- التذييل الجديد -->
 <footer class="footer">
-  <p>مَرصَد · مفتوح المصدر · يعمل عبر GitHub Actions + Pages</p>
-  <p class="warning">⚠️ هذا المشروع للأغراض البحثية والصحفية فقط · سحب البيانات الآلي يخالف شروط فيسبوك</p>
+  <div class="footer-features">
+    <div class="footer-feature">
+      <span class="feature-icon">🔌</span>
+      <div>
+        <strong>5 مصادر سحب</strong>
+        <span>قابلة للتبديل والدمج</span>
+      </div>
+    </div>
+    <div class="footer-feature">
+      <span class="feature-icon">📅</span>
+      <div>
+        <strong>نطاق زمني</strong>
+        <span>سحب بين تاريخين محددين</span>
+      </div>
+    </div>
+    <div class="footer-feature">
+      <span class="feature-icon">🔔</span>
+      <div>
+        <strong>تنبيهات Telegram</strong>
+        <span>للمنشورات المهمة فوراً</span>
+      </div>
+    </div>
+    <div class="footer-feature">
+      <span class="feature-icon">🤖</span>
+      <div>
+        <strong>تشغيل تلقائي</strong>
+        <span>GitHub Actions كل 6 ساعات</span>
+      </div>
+    </div>
+    <div class="footer-feature">
+      <span class="feature-icon">📊</span>
+      <div>
+        <strong>فلاتر متقدمة</strong>
+        <span>تاريخ، مصدر، تفاعل</span>
+      </div>
+    </div>
+    <div class="footer-feature">
+      <span class="feature-icon">📥</span>
+      <div>
+        <strong>تصدير CSV</strong>
+        <span>كل البيانات بكبسة واحدة</span>
+      </div>
+    </div>
+    <div class="footer-feature">
+      <span class="feature-icon">🎨</span>
+      <div>
+        <strong>واجهة عربية</strong>
+        <span>تصميم إعلامي احترافي</span>
+      </div>
+    </div>
+    <div class="footer-feature">
+      <span class="feature-icon">💾</span>
+      <div>
+        <strong>نسخ احتياطية</strong>
+        <span>البيانات محفوظة في Git</span>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <p>© <span id="footerYear"></span> مَرصَد · جميع الحقوق محفوظة</p>
+  </div>
 </footer>
 
 <!-- Modal عام -->

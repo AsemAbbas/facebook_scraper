@@ -8,15 +8,6 @@
       "source": "auto",
       "enabled": true,
       "tags": ["news", "arabic"]
-    },
-    {
-      "slug": "alarabiya",
-      "name": "العربية",
-      "url": "https://www.facebook.com/AlArabiya",
-      "max_posts": 30,
-      "source": "auto",
-      "enabled": true,
-      "tags": ["news", "arabic"]
     }
   ],
   "_help": {
