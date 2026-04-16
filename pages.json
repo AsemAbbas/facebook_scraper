@@ -4,7 +4,7 @@
       "slug": "aljazeera",
       "name": "قناة الجزيرة",
       "url": "https://www.facebook.com/aljazeerachannel",
-      "max_posts": 30,
+      "max_posts": 10,
       "source": "auto",
       "enabled": true,
       "tags": ["news", "arabic"]
