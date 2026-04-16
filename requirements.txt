@@ -2,6 +2,10 @@
 # مَرصَد · Multi-Source Facebook Monitor
 # ====================================
 
+# Backend Server (v3.0)
+flask>=3.0.0           # web server + REST API
+flask-cors>=4.0.0      # CORS للـ API
+
 # Core
 pyyaml>=6.0.1          # قراءة config.yml
 aiohttp>=3.9.0         # HTTP async requests (لكل الـ RSS sources و Apify)
@@ -10,4 +14,4 @@ aiohttp>=3.9.0         # HTTP async requests (لكل الـ RSS sources و Apify
 playwright>=1.40.0
 
 # Telegram (اختياري)
-# requests>=2.31.0     # aiohttp كافي، لكن سكريبت Telegram يستخدم requests
+# requests>=2.31.0     # aiohttp كافي

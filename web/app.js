@@ -70,19 +70,53 @@ const els = {
 async function init() {
   els.footerYear.textContent = new Date().getFullYear();
 
+  // 1) Detect backend (server.py vs static)
+  await detectBackend();
+  showBackendStatus();
+
   await loadIndex();
   await loadAllPages();
   await loadPagesConfig();
+  await loadSourcesStatus();
   await loadHistory();
 
-  setDefaultDateRange();   // آخر 24 ساعة افتراضياً
+  setDefaultDateRange();
   restoreFilters();
   setupListeners();
   applyFilters();
 
-  // Polling للعمليات الحية
+  // Live runs (different sources based on backend)
   pollLiveRuns();
-  setInterval(pollLiveRuns, 30000); // كل 30 ثانية
+  setInterval(pollLiveRuns, STATE.hasBackend ? 5000 : 30000);
+
+  // First-run wizard
+  maybeShowFirstRunWizard();
+}
+
+function showBackendStatus() {
+  // Add subtle indicator in last-update area showing mode
+  if (!els.lastUpdateText) return;
+  const dot = document.querySelector('#lastUpdate .pulse');
+  if (dot) {
+    if (STATE.hasBackend) {
+      dot.style.background = 'var(--success)';
+      dot.title = 'متصل بالخادم المحلي · كل الميزات متاحة';
+    } else {
+      dot.style.background = 'var(--gold)';
+      dot.title = 'وضع GitHub Pages · ميزات محدودة';
+    }
+  }
+}
+
+function maybeShowFirstRunWizard() {
+  // Show wizard if backend + no pages
+  if (!STATE.hasBackend) return;
+  const noPages = (STATE.pagesConfig || []).length === 0;
+  const noPosts = (STATE.allPosts || []).length === 0;
+  const dismissed = localStorage.getItem('marsad_wizard_dismissed') === '1';
+  if (noPages && noPosts && !dismissed) {
+    setTimeout(() => openFirstRunWizard(), 600);
+  }
 }
 
 function setDefaultDateRange() {
@@ -146,29 +180,56 @@ async function loadAllPages() {
 }
 
 async function loadPagesConfig() {
-  // محاولة قراءة pages.json من الريبو
+  // 1) Try the backend API (server.py mode)
   try {
-    const res = await fetch('../pages.json?t=' + Date.now());
+    const res = await fetch('/api/pages');
     if (res.ok) {
       const data = await res.json();
+      STATE.pagesConfig = (data.pages || []).map(p => ({ ...p }));
+      STATE.hasBackend = true;
+      return;
+    }
+  } catch {}
+
+  STATE.hasBackend = false;
+
+  // 2) GitHub raw fallback (static GitHub Pages mode)
+  try {
+    const info = detectRepoInfo();
+    const ghRes = await fetch(`https://raw.githubusercontent.com/${info.owner}/${info.repo}/main/pages.json?t=${Date.now()}`);
+    if (ghRes.ok) {
+      const data = await ghRes.json();
       STATE.pagesConfig = (data.pages || []).map(p => ({ ...p }));
       return;
     }
   } catch {}
 
-  // fallback: من STATE.index
+  // 3) From index.json fallback
   STATE.pagesConfig = (STATE.index?.pages || []).map(p => ({
     slug: p.slug, name: p.name, url: p.url,
     max_posts: 30, source: 'auto', enabled: true,
   }));
+}
 
-  // draft من localStorage
+async function detectBackend() {
   try {
-    const saved = localStorage.getItem(LS.pagesConfig);
-    if (saved) {
-      const draft = JSON.parse(saved);
-      if (Array.isArray(draft) && draft.length) STATE.pagesConfig = draft;
+    const res = await fetch('/api/status');
+    if (res.ok) {
+      const data = await res.json();
+      STATE.backendStatus = data;
+      STATE.hasBackend = !!data.ok;
+      return data.ok;
     }
+  } catch {}
+  STATE.hasBackend = false;
+  return false;
+}
+
+async function loadSourcesStatus() {
+  if (!STATE.hasBackend) return;
+  try {
+    const res = await fetch('/api/sources');
+    if (res.ok) STATE.sourcesStatus = await res.json();
   } catch {}
 }
 
@@ -194,6 +255,35 @@ function renderPageFilter() {
 // ========= Live Runs Polling =========
 
 async function pollLiveRuns() {
+  // Backend mode: poll /api/scrape
+  if (STATE.hasBackend) {
+    try {
+      const res = await fetch('/api/scrape');
+      if (!res.ok) return;
+      const data = await res.json();
+      const live = data.active || [];
+      STATE.liveRuns = live;
+
+      if (live.length) {
+        const r = live[0];
+        els.liveStatusBanner.hidden = false;
+        const pct = r.total ? Math.round((r.progress / r.total) * 100) : 0;
+        els.liveStatusText.textContent =
+          `🔄 سحب قيد التنفيذ… ${r.current_page || ''} (${r.progress}/${r.total} · ${pct}%)`;
+        els.liveStatusLink.href = '#';
+        els.liveStatusLink.textContent = 'عرض التفاصيل ↓';
+        els.liveStatusLink.onclick = (e) => {
+          e.preventDefault();
+          openProgressModal(r.id);
+        };
+      } else {
+        els.liveStatusBanner.hidden = true;
+      }
+    } catch {}
+    return;
+  }
+
+  // Fallback: GitHub Actions API
   const token = (() => { try { return localStorage.getItem(LS.token); } catch { return null; } })();
   if (!token) return;
 
@@ -211,15 +301,13 @@ async function pollLiveRuns() {
     if (!res.ok) return;
     const data = await res.json();
     const runs = data.workflow_runs || [];
-
-    // Live = queued أو in_progress
     const live = runs.filter(r => ['queued', 'in_progress'].includes(r.status));
     STATE.liveRuns = live;
 
     if (live.length) {
       const r = live[0];
       els.liveStatusBanner.hidden = false;
-      els.liveStatusText.textContent = `يوجد ${live.length} عملية سحب قيد التنفيذ… (${r.status === 'queued' ? 'في الطابور' : 'قيد التشغيل'})`;
+      els.liveStatusText.textContent = `يوجد ${live.length} عملية سحب قيد التنفيذ…`;
       els.liveStatusLink.href = r.html_url;
     } else {
       els.liveStatusBanner.hidden = true;
@@ -641,49 +729,24 @@ function exportCSV() {
 // ========= Trigger workflow =========
 
 function openTriggerModal() {
+  // Backend mode: direct one-click with real progress
+  if (STATE.hasBackend) {
+    openBackendTriggerModal();
+    return;
+  }
+
+  // Fallback: GitHub Actions mode
   const info = detectRepoInfo();
   openModal('🚀 تشغيل سحب جديد', `
     <div class="modal-instructions">
-      <div class="quick-action">
-        <h3>🔑 الطريقة الأسهل (من هنا)</h3>
-        <p>الصق GitHub Personal Access Token بصلاحية <code>repo</code>:</p>
-        <p class="small-note">ما عندك Token؟ <a href="https://github.com/settings/tokens/new?scopes=repo&description=marsad-trigger" target="_blank" rel="noopener">أنشئ واحد الآن</a></p>
-
-        <input type="password" id="ghToken" class="input" placeholder="ghp_..." dir="ltr">
-
-        <div class="form-row" style="margin-top:10px">
-          <label class="filter-label">سحب صفحة محددة (اختياري)</label>
-          <select id="runSlugSelect" class="select">
-            <option value="">كل الصفحات</option>
-            ${STATE.pagesConfig.map(p =>
-              `<option value="${escapeHtml(p.slug)}">${escapeHtml(p.name)}</option>`
-            ).join('')}
-          </select>
-        </div>
-
-        <div class="form-row" style="margin-top:8px">
-          <label class="filter-label">إجبار مصدر (اختياري)</label>
-          <select id="runSourceSelect" class="select">
-            <option value="">تلقائي</option>
-            <option value="apify">💎 Apify</option>
-            <option value="fetchrss">🪶 FetchRSS</option>
-            <option value="rssapp">⚡ RSS.app</option>
-            <option value="rsshub">🏠 RSSHub</option>
-            <option value="playwright">🎭 Playwright</option>
-          </select>
-        </div>
-
-        <button class="btn-trigger btn-full" id="runWorkflowBtn" style="margin-top:14px">
-          🚀 تشغيل الآن
-        </button>
-        <p class="note">⏱️ السحب يستغرق 3-5 دقائق. الصفحة تحدّث تلقائياً بعدها.</p>
+      <div class="alert alert-info">
+        💡 للتجربة المثلى: شغّل <code>start.bat</code> على جهازك للحصول على سحب مباشر مع progress حقيقي.
       </div>
-
-      <details class="alt-method">
-        <summary>🔗 طرق بديلة</summary>
-        <p style="margin-top:10px">يدوياً من GitHub: <a href="${info.actionsUrl}" target="_blank" rel="noopener">فتح Actions</a> → "Run workflow"</p>
-        <p>جدول تلقائي: يشتغل كل 6 ساعات من GitHub Actions</p>
-      </details>
+      <div class="quick-action">
+        <h3>🔑 وضع GitHub Actions</h3>
+        <input type="password" id="ghToken" class="input" placeholder="ghp_..." dir="ltr">
+        <button class="btn-trigger btn-full" id="runWorkflowBtn" style="margin-top:14px">🚀 تشغيل</button>
+      </div>
     </div>
   `);
 
@@ -694,12 +757,195 @@ function openTriggerModal() {
   } catch {}
 
   document.getElementById('runWorkflowBtn').addEventListener('click', () => {
-    const inputs = {
-      page_slug: document.getElementById('runSlugSelect').value,
-      force_source: document.getElementById('runSourceSelect').value,
-    };
-    triggerWorkflow(info, tokenInput.value.trim(), inputs);
+    triggerWorkflow(info, tokenInput.value.trim(), {});
   });
+}
+
+function openBackendTriggerModal() {
+  const pagesOpts = STATE.pagesConfig.map(p =>
+    `<option value="${escapeHtml(p.slug)}">${escapeHtml(p.name)}</option>`
+  ).join('');
+
+  const sourcesStatus = STATE.sourcesStatus || [];
+  const enabledSources = sourcesStatus.filter(s => s.enabled);
+
+  openModal('🚀 سحب جديد', `
+    <div class="trigger-form">
+      ${enabledSources.length === 0 ? `
+        <div class="alert alert-warn">
+          ⚠️ لا يوجد مصدر مفعّل. افتح <a href="#" id="openSrcSettings">الإعدادات</a> وفعّل مصدر واحد أولاً.
+        </div>
+      ` : `
+        <div class="alert alert-info">
+          ✨ المصادر المفعّلة: ${enabledSources.map(s => s.icon + ' ' + s.name).join('، ')}
+        </div>
+      `}
+
+      <div class="form-row">
+        <label class="filter-label">الصفحات</label>
+        <select id="runSlugSelect" class="select">
+          <option value="">كل الصفحات (${STATE.pagesConfig.length})</option>
+          ${pagesOpts}
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label class="filter-label">المصدر</label>
+        <select id="runSourceSelect" class="select">
+          <option value="">تلقائي (حسب الأولوية)</option>
+          ${enabledSources.map(s =>
+            `<option value="${s.name}">${s.icon} ${s.name}</option>`
+          ).join('')}
+        </select>
+      </div>
+
+      <div class="form-inline">
+        <div class="form-row">
+          <label class="filter-label">من تاريخ (اختياري)</label>
+          <input type="date" id="runDateFrom" class="input">
+        </div>
+        <div class="form-row">
+          <label class="filter-label">إلى تاريخ (اختياري)</label>
+          <input type="date" id="runDateTo" class="input">
+        </div>
+      </div>
+
+      <button class="btn-trigger btn-full btn-lg" id="startScrapeBtn" ${enabledSources.length === 0 ? 'disabled' : ''}>
+        ▶️ ابدأ السحب
+      </button>
+
+      <p class="note">
+        ⏱️ السحب يستغرق 1-5 دقائق. التقدم سيظهر مباشرة بدون تحديث الصفحة.
+      </p>
+    </div>
+  `);
+
+  const srcLink = document.getElementById('openSrcSettings');
+  if (srcLink) {
+    srcLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      closeModal();
+      setTimeout(() => openSettingsModal(), 250);
+    });
+  }
+
+  document.getElementById('startScrapeBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('startScrapeBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ بدء…';
+
+    const body = {};
+    const slug = document.getElementById('runSlugSelect').value;
+    const source = document.getElementById('runSourceSelect').value;
+    const dateFrom = document.getElementById('runDateFrom').value;
+    const dateTo = document.getElementById('runDateTo').value;
+    if (slug) body.slug = slug;
+    if (source) body.source = source;
+    if (dateFrom) body.date_from = dateFrom;
+    if (dateTo) body.date_to = dateTo;
+
+    try {
+      const res = await fetch('/api/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast('فشل: ' + (err.error || res.status), 'error');
+        btn.disabled = false;
+        btn.textContent = '▶️ ابدأ السحب';
+        return;
+      }
+      const data = await res.json();
+      openProgressModal(data.job_id);
+    } catch (e) {
+      showToast('خطأ: ' + e.message, 'error');
+      btn.disabled = false;
+      btn.textContent = '▶️ ابدأ السحب';
+    }
+  });
+}
+
+// ========= Real-time Progress Modal (SSE) =========
+
+function openProgressModal(jobId) {
+  openModal('🔄 السحب قيد التنفيذ', `
+    <div class="progress-modal">
+      <div class="progress-header">
+        <div class="progress-status" id="progStatus">⏳ بدء…</div>
+        <div class="progress-bar-outer">
+          <div class="progress-bar-inner" id="progBar" style="width:0%"></div>
+        </div>
+        <div class="progress-meta">
+          <span id="progCurrent">—</span>
+          <span id="progCount">0/0</span>
+        </div>
+      </div>
+      <div class="progress-log" id="progLog"></div>
+      <div class="progress-footer" id="progFooter" hidden>
+        <button class="btn-trigger btn-full" id="progDoneBtn">✓ تم · عرض النتائج</button>
+      </div>
+    </div>
+  `, 'lg');
+
+  const evtSource = new EventSource(`/api/scrape/${jobId}/stream`);
+  const log = document.getElementById('progLog');
+
+  evtSource.onmessage = async (evt) => {
+    try {
+      const data = JSON.parse(evt.data);
+      const pct = data.total ? Math.round((data.progress / data.total) * 100) : 0;
+      const bar = document.getElementById('progBar');
+      if (bar) bar.style.width = pct + '%';
+      const curr = document.getElementById('progCurrent');
+      if (curr) curr.textContent = data.current_page || '—';
+      const count = document.getElementById('progCount');
+      if (count) count.textContent = `${data.progress}/${data.total}`;
+
+      const statusEl = document.getElementById('progStatus');
+      if (statusEl) {
+        if (data.status === 'running') statusEl.innerHTML = '🔄 قيد التنفيذ…';
+        else if (data.status === 'success') statusEl.innerHTML = '✅ انتهى بنجاح';
+        else if (data.status === 'error') statusEl.innerHTML = '⚠️ انتهى مع أخطاء';
+      }
+
+      (data.new_messages || []).forEach(m => {
+        if (!log) return;
+        const line = document.createElement('div');
+        line.className = `log-line log-${m.level}`;
+        line.textContent = m.text;
+        log.appendChild(line);
+      });
+      if (log) log.scrollTop = log.scrollHeight;
+
+      if (data.status === 'success' || data.status === 'error') {
+        evtSource.close();
+        const footer = document.getElementById('progFooter');
+        if (footer) footer.hidden = false;
+        const doneBtn = document.getElementById('progDoneBtn');
+        if (doneBtn) {
+          doneBtn.addEventListener('click', async () => {
+            closeModal();
+            await loadIndex();
+            await loadAllPages();
+            await loadHistory();
+            applyFilters();
+            showToast(data.status === 'success' ? '✅ تم تحديث البيانات' : '⚠️ انتهى مع أخطاء',
+                      data.status === 'success' ? 'success' : 'error');
+          });
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  evtSource.onerror = () => {
+    evtSource.close();
+    const statusEl = document.getElementById('progStatus');
+    if (statusEl) statusEl.innerHTML = '⚠️ انقطع الاتصال';
+  };
 }
 
 function detectRepoInfo() {
@@ -766,9 +1012,6 @@ async function triggerWorkflow(repoInfo, token, inputs) {
 // ========= History Modal =========
 
 async function openHistoryModal() {
-  const token = (() => { try { return localStorage.getItem(LS.token); } catch { return null; } })();
-  const info = detectRepoInfo();
-
   openModal('🕐 سجل العمليات', `
     <div class="history-loading">
       <div class="spinner"></div>
@@ -776,6 +1019,25 @@ async function openHistoryModal() {
     </div>
   `, 'lg');
 
+  // Backend mode: use /api/scrape + /api/history
+  if (STATE.hasBackend) {
+    try {
+      const [activeRes, histRes] = await Promise.all([
+        fetch('/api/scrape'),
+        fetch('/api/history'),
+      ]);
+      const active = activeRes.ok ? (await activeRes.json()).active || [] : [];
+      const history = histRes.ok ? (await histRes.json()).runs || [] : [];
+      renderBackendHistory(active, history);
+    } catch (e) {
+      els.modalBody.innerHTML = `<p class="note">فشل التحميل: ${escapeHtml(e.message)}</p>`;
+    }
+    return;
+  }
+
+  // Fallback: GitHub Actions
+  const token = (() => { try { return localStorage.getItem(LS.token); } catch { return null; } })();
+  const info = detectRepoInfo();
   let githubRuns = [];
   if (token) {
     try {
@@ -791,8 +1053,82 @@ async function openHistoryModal() {
       }
     } catch {}
   }
-
   renderHistory(githubRuns, token, info);
+}
+
+function renderBackendHistory(active, history) {
+  const html = `
+    <div class="history-wrapper">
+      ${active.length ? `
+        <div class="history-section">
+          <h3>🔴 قيد التنفيذ (${active.length})</h3>
+          ${active.map(r => renderBackendRunRow(r, true)).join('')}
+        </div>
+      ` : ''}
+
+      ${history.length ? `
+        <div class="history-section">
+          <h3>📜 آخر التشغيلات (${history.length})</h3>
+          ${history.map(r => renderBackendRunRow(r, false)).join('')}
+        </div>
+      ` : `
+        <div class="empty-state">
+          <span class="empty-icon">📋</span>
+          <h4>لا توجد تشغيلات بعد</h4>
+          <p>اضغط "سحب الآن" ▶️ من الأعلى لبدء أول عملية.</p>
+        </div>
+      `}
+    </div>
+  `;
+  els.modalBody.innerHTML = html;
+
+  // Click على active run يفتح progress modal
+  document.querySelectorAll('.run-row[data-job-id]').forEach(row => {
+    row.addEventListener('click', () => {
+      const jid = row.dataset.jobId;
+      if (jid) {
+        closeModal();
+        setTimeout(() => openProgressModal(jid), 250);
+      }
+    });
+  });
+}
+
+function renderBackendRunRow(r, isActive) {
+  const statusMap = {
+    queued: { label: '⏳ في الطابور', color: 'warn' },
+    running: { label: '🔄 قيد التشغيل', color: 'warn' },
+    success: { label: '✅ نجح', color: 'success' },
+    error: { label: '❌ فشل', color: 'error' },
+  };
+  const s = statusMap[r.status] || { label: r.status, color: 'muted' };
+  const duration = r.duration_seconds ||
+    (r.finished_at && r.started_at
+      ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000)
+      : null);
+  const params = r.params || {};
+  const result = r.result || {};
+
+  return `
+    <div class="run-row ${isActive ? 'clickable' : ''}" ${isActive ? `data-job-id="${r.id}"` : ''}>
+      <div class="run-row-head">
+        <span class="run-status ${s.color}">${s.label}</span>
+        <span class="run-trigger">${r.trigger === 'schedule' ? '⏰ مجدول' : '👤 يدوي'}</span>
+        <span class="run-time">${formatRelTime(r.started_at)}</span>
+      </div>
+      <div class="run-row-body">
+        ${r.new_posts !== undefined
+          ? `<strong>${formatNum(r.new_posts)}</strong> منشور جديد · ${r.pages_success || 0}/${r.pages_total || 0} صفحة · ⏱️ ${formatDuration(duration)}`
+          : (result.new_posts !== undefined
+            ? `<strong>${formatNum(result.new_posts)}</strong> جديد · ${result.success || 0} نجح`
+            : `جاري التشغيل…`)}
+        ${(r.sources_used || result.sources_used || []).length
+          ? `· المصادر: ${(r.sources_used || result.sources_used).join(', ')}` : ''}
+        ${params.slug ? `· صفحة: <code>${escapeHtml(params.slug)}</code>` : ''}
+      </div>
+      ${isActive ? '<div class="run-row-actions"><span class="run-link">عرض التقدم ↑</span></div>' : ''}
+    </div>
+  `;
 }
 
 function renderHistory(githubRuns, token, info) {
@@ -1137,27 +1473,37 @@ function renderSourcesGuide() {
 
 function openPagesModal() {
   const pages = STATE.pagesConfig;
+  const hasBackend = STATE.hasBackend;
+
   openModal('📄 إدارة الصفحات', `
     <div class="pages-manager">
       <div class="pages-toolbar">
         <button class="btn-trigger btn-sm" id="addPageBtn" type="button">+ إضافة صفحة</button>
-        <button class="btn-refresh btn-sm" id="exportPagesJson" type="button">تصدير</button>
-        <button class="btn-refresh btn-sm" id="importPagesJson" type="button">استيراد</button>
+        <button class="btn-refresh btn-sm" id="exportPagesJson" type="button">📤 تصدير</button>
+        <button class="btn-refresh btn-sm" id="importPagesJson" type="button">📥 استيراد</button>
       </div>
 
       <div class="pages-list" id="pagesList">
         ${pages.length === 0
-          ? '<p class="note-empty">لا توجد صفحات بعد. اضغط "إضافة صفحة".</p>'
+          ? `<div class="empty-state">
+               <span class="empty-icon">📭</span>
+               <h4>لا توجد صفحات بعد</h4>
+               <p>اضغط "+ إضافة صفحة" لبدء رصد صفحة فيسبوك</p>
+             </div>`
           : pages.map((p, i) => renderPageRow(p, i)).join('')}
       </div>
 
       <div class="pages-footer">
-        <button class="btn-trigger" id="savePagesLocal" type="button">حفظ محلياً</button>
-        <button class="btn-refresh" id="savePagesGitHub" type="button">💾 حفظ في GitHub</button>
+        ${hasBackend
+          ? `<button class="btn-trigger btn-full" id="savePagesLocal" type="button">💾 حفظ كل التغييرات</button>`
+          : `<button class="btn-trigger" id="savePagesLocal" type="button">حفظ محلياً</button>
+             <button class="btn-refresh" id="savePagesGitHub" type="button">💾 حفظ في GitHub</button>`}
       </div>
 
       <p class="note">
-        <strong>ملاحظة:</strong> بعد الحفظ، شغّل سحب جديد من زر "سحب الآن".
+        ${hasBackend
+          ? `<strong>💡 نصيحة:</strong> اضغط 🧪 لاختبار صفحة قبل الحفظ (يسحب 3 منشورات للتأكد من الرابط). بعد الحفظ، اضغط "سحب الآن" ▶️.`
+          : `<strong>ملاحظة:</strong> بعد الحفظ، شغّل سحب جديد من زر "سحب الآن".`}
       </p>
     </div>
   `, 'lg');
@@ -1167,13 +1513,14 @@ function openPagesModal() {
 
 function renderPageRow(page, index) {
   return `
-    <div class="page-row" data-index="${index}">
+    <div class="page-row" data-index="${index}" data-slug="${escapeHtml(page.slug || '')}">
       <div class="page-row-head">
         <label class="switch">
           <input type="checkbox" class="page-enabled" ${page.enabled !== false ? 'checked' : ''}>
           <span class="slider"></span>
         </label>
-        <input type="text" class="input page-name" placeholder="اسم الصفحة" value="${escapeHtml(page.name || '')}">
+        <input type="text" class="input page-name" placeholder="اسم الصفحة (مثل: قناة الجزيرة)" value="${escapeHtml(page.name || '')}">
+        ${STATE.hasBackend ? `<button class="btn-icon-sm btn-test page-test-btn" title="اختبر السحب" type="button">🧪</button>` : ''}
         <button class="btn-icon-sm btn-danger page-delete" title="حذف" type="button">×</button>
       </div>
       <div class="page-row-body">
@@ -1276,20 +1623,110 @@ function bindPagesManagerEvents() {
     input.click();
   });
 
-  document.getElementById('savePagesLocal').addEventListener('click', () => {
+  document.getElementById('savePagesLocal').addEventListener('click', async () => {
     syncPagesFromUI();
+    // Backend mode: direct save to pages.json
+    if (STATE.hasBackend) {
+      try {
+        const res = await fetch('/api/pages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pages: STATE.pagesConfig }),
+        });
+        if (res.ok) {
+          showToast('✅ تم الحفظ في pages.json', 'success');
+        } else {
+          showToast('فشل الحفظ', 'error');
+        }
+      } catch (e) {
+        showToast('خطأ: ' + e.message, 'error');
+      }
+      return;
+    }
+    // Fallback: localStorage
     try {
       localStorage.setItem(LS.pagesConfig, JSON.stringify(STATE.pagesConfig));
-      showToast('✅ تم الحفظ محلياً', 'success');
+      showToast('✅ تم الحفظ محلياً (localStorage)', 'success');
     } catch (e) {
       showToast('فشل الحفظ', 'error');
     }
   });
 
-  document.getElementById('savePagesGitHub').addEventListener('click', () => {
-    syncPagesFromUI();
-    saveToGitHub();
+  const ghBtn = document.getElementById('savePagesGitHub');
+  if (ghBtn) {
+    ghBtn.addEventListener('click', () => {
+      syncPagesFromUI();
+      saveToGitHub();
+    });
+  }
+
+  // Test buttons
+  document.querySelectorAll('.page-test-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const row = btn.closest('.page-row');
+      const url = row.querySelector('.page-url').value.trim();
+      const source = row.querySelector('.page-source').value;
+      if (!url) {
+        showToast('أدخل رابط الصفحة أولاً', 'error');
+        return;
+      }
+      await testPage(url, source === 'auto' ? null : source, row);
+    });
   });
+}
+
+async function testPage(url, source, row) {
+  if (!STATE.hasBackend) {
+    showToast('الاختبار يحتاج السيرفر المحلي (start.bat)', 'error');
+    return;
+  }
+  const resultEl = row.querySelector('.page-test-result') || (() => {
+    const r = document.createElement('div');
+    r.className = 'page-test-result';
+    row.appendChild(r);
+    return r;
+  })();
+  resultEl.innerHTML = '<div class="spinner spinner-sm"></div> جاري الاختبار…';
+
+  try {
+    // pick first enabled source if no override
+    let testSource = source;
+    if (!testSource) {
+      const firstEnabled = (STATE.sourcesStatus || []).find(s => s.enabled);
+      testSource = firstEnabled ? firstEnabled.name : 'playwright';
+    }
+
+    const res = await fetch('/api/test-page', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, source: testSource }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      resultEl.innerHTML = `<div class="test-result error">❌ ${escapeHtml(data.error || 'فشل الاختبار')}</div>`;
+      return;
+    }
+    if (!data.count) {
+      resultEl.innerHTML = `<div class="test-result warn">⚠️ ما رجع أي منشور. جرّب مصدر آخر أو تأكد من الرابط.</div>`;
+      return;
+    }
+    resultEl.innerHTML = `
+      <div class="test-result success">
+        ✅ تم سحب <strong>${data.count}</strong> منشور عبر <code>${testSource}</code>
+        <details style="margin-top:6px">
+          <summary>عرض العينة</summary>
+          ${data.posts.slice(0, 2).map(p => `
+            <div class="test-sample">
+              <strong>${escapeHtml((p.text || '').slice(0, 60))}…</strong>
+            </div>
+          `).join('')}
+        </details>
+      </div>
+    `;
+  } catch (e) {
+    resultEl.innerHTML = `<div class="test-result error">❌ ${escapeHtml(e.message)}</div>`;
+  }
 }
 
 function syncPagesFromUI() {
@@ -1765,6 +2202,217 @@ function openAnalyticsModal() {
 
 // ========= Settings Modal =========
 
+// ========= First-Run Wizard =========
+
+function openFirstRunWizard() {
+  const sourcesStatus = STATE.sourcesStatus || [];
+  const enabledSources = sourcesStatus.filter(s => s.enabled);
+  const hasAnySource = enabledSources.length > 0;
+
+  openModal('👋 أهلاً بك في مَرصَد', `
+    <div class="wizard">
+      <div class="wizard-intro-big">
+        <p>بثلاث خطوات بسيطة تبدأ في رصد منشورات صفحات فيسبوك:</p>
+      </div>
+
+      <!-- Step 1: Source -->
+      <div class="wizard-step ${hasAnySource ? 'done' : 'active'}" data-step="1">
+        <div class="wizard-step-head">
+          <div class="step-num">1</div>
+          <div class="step-title">اختر مصدر السحب</div>
+          ${hasAnySource ? '<span class="step-check">✓</span>' : ''}
+        </div>
+        <div class="wizard-step-body">
+          ${hasAnySource
+            ? `<p class="wizard-ok">✅ مفعّل: ${enabledSources.map(s => s.icon + ' ' + s.name).join('، ')}</p>`
+            : `
+              <p>اختر مصدراً واحداً للبدء (نوصي بـ Playwright للتجربة):</p>
+              <div class="wizard-sources">
+                ${sourcesStatus.map(s => `
+                  <button class="wizard-source" data-source="${s.name}">
+                    <span class="source-icon">${s.icon}</span>
+                    <div class="source-info">
+                      <strong>${s.name}</strong>
+                      <span>${s.description}</span>
+                      <em>${s.price}</em>
+                    </div>
+                  </button>
+                `).join('')}
+              </div>
+            `}
+        </div>
+      </div>
+
+      <!-- Step 2: Pages -->
+      <div class="wizard-step ${STATE.pagesConfig.length > 0 ? 'done' : (hasAnySource ? 'active' : '')}" data-step="2">
+        <div class="wizard-step-head">
+          <div class="step-num">2</div>
+          <div class="step-title">أضف صفحات فيسبوك لرصدها</div>
+          ${STATE.pagesConfig.length > 0 ? '<span class="step-check">✓</span>' : ''}
+        </div>
+        <div class="wizard-step-body">
+          ${STATE.pagesConfig.length > 0
+            ? `<p class="wizard-ok">✅ ${STATE.pagesConfig.length} صفحة مُعرّفة</p>`
+            : `
+              <p>أضف أول صفحة - مثال:</p>
+              <div class="wizard-quick-page">
+                <input type="text" id="wizardPageName" class="input" placeholder="اسم الصفحة (مثل: قناة الجزيرة)">
+                <input type="text" id="wizardPageUrl" class="input" placeholder="https://facebook.com/..." dir="ltr">
+                <div class="wizard-suggestions">
+                  <span>اقتراحات:</span>
+                  <button class="suggest-btn" data-name="قناة الجزيرة" data-url="https://www.facebook.com/aljazeerachannel">🎥 الجزيرة</button>
+                  <button class="suggest-btn" data-name="العربية" data-url="https://www.facebook.com/AlArabiya">📺 العربية</button>
+                  <button class="suggest-btn" data-name="BBC عربي" data-url="https://www.facebook.com/bbcarabic">📰 BBC</button>
+                </div>
+                <button class="btn-trigger btn-full" id="wizardAddPageBtn">+ إضافة الصفحة</button>
+              </div>
+            `}
+        </div>
+      </div>
+
+      <!-- Step 3: Scrape -->
+      <div class="wizard-step ${STATE.allPosts.length > 0 ? 'done' : (STATE.pagesConfig.length > 0 ? 'active' : '')}" data-step="3">
+        <div class="wizard-step-head">
+          <div class="step-num">3</div>
+          <div class="step-title">شغّل أول سحب</div>
+          ${STATE.allPosts.length > 0 ? '<span class="step-check">✓</span>' : ''}
+        </div>
+        <div class="wizard-step-body">
+          ${STATE.allPosts.length > 0
+            ? `<p class="wizard-ok">✅ ${formatNum(STATE.allPosts.length)} منشور تم سحبه</p>`
+            : `
+              <p>اضغط الزر ليبدأ سحب المنشورات الآن (1-3 دقائق):</p>
+              <button class="btn-trigger btn-full btn-lg" id="wizardScrapeBtn" ${STATE.pagesConfig.length === 0 ? 'disabled' : ''}>
+                ▶️ سحب الآن
+              </button>
+            `}
+        </div>
+      </div>
+
+      <div class="wizard-footer">
+        <button class="btn-refresh btn-sm" id="wizardDismissBtn">تخطي هذا الدليل</button>
+      </div>
+    </div>
+  `, 'lg');
+
+  bindWizardEvents();
+}
+
+function bindWizardEvents() {
+  // Step 1: Source buttons
+  document.querySelectorAll('.wizard-source').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const sourceName = btn.dataset.source;
+      btn.disabled = true;
+      btn.textContent = '⏳ جاري التفعيل…';
+      await enableSourceInConfig(sourceName);
+      // refresh
+      await loadSourcesStatus();
+      closeModal();
+      setTimeout(openFirstRunWizard, 300);
+    });
+  });
+
+  // Step 2: Suggestions
+  document.querySelectorAll('.suggest-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const name = document.getElementById('wizardPageName');
+      const url = document.getElementById('wizardPageUrl');
+      if (name) name.value = btn.dataset.name;
+      if (url) url.value = btn.dataset.url;
+    });
+  });
+
+  // Step 2: Add page
+  const addBtn = document.getElementById('wizardAddPageBtn');
+  if (addBtn) {
+    addBtn.addEventListener('click', async () => {
+      const name = document.getElementById('wizardPageName').value.trim();
+      const url = document.getElementById('wizardPageUrl').value.trim();
+      if (!name || !url) {
+        showToast('أدخل الاسم والرابط', 'error');
+        return;
+      }
+      addBtn.disabled = true;
+      addBtn.textContent = '⏳ جاري الحفظ…';
+      const newPage = {
+        slug: slugify(name),
+        name, url,
+        max_posts: 15,
+        source: 'auto',
+        enabled: true,
+        tags: ['news'],
+      };
+      STATE.pagesConfig.push(newPage);
+      if (STATE.hasBackend) {
+        await fetch('/api/pages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pages: STATE.pagesConfig }),
+        });
+      }
+      showToast('✅ تم إضافة الصفحة', 'success');
+      closeModal();
+      setTimeout(openFirstRunWizard, 300);
+    });
+  }
+
+  // Step 3: Scrape now
+  const scrapeBtn = document.getElementById('wizardScrapeBtn');
+  if (scrapeBtn) {
+    scrapeBtn.addEventListener('click', async () => {
+      closeModal();
+      setTimeout(() => {
+        if (STATE.hasBackend) {
+          // Start directly
+          fetch('/api/scrape', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          }).then(r => r.json()).then(d => {
+            if (d.job_id) openProgressModal(d.job_id);
+          });
+        } else {
+          openTriggerModal();
+        }
+      }, 250);
+    });
+  }
+
+  // Dismiss
+  const dismissBtn = document.getElementById('wizardDismissBtn');
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', () => {
+      localStorage.setItem('marsad_wizard_dismissed', '1');
+      closeModal();
+      showToast('يمكنك فتح الدليل من زر ⓘ', 'success');
+    });
+  }
+}
+
+async function enableSourceInConfig(sourceName) {
+  if (!STATE.hasBackend) return false;
+  try {
+    // Get current config
+    const res = await fetch('/api/config');
+    if (!res.ok) return false;
+    const data = await res.json();
+    const config = data.config || {};
+    (config.sources || []).forEach(s => {
+      if (s.name === sourceName) s.enabled = true;
+    });
+    // Save
+    const saveRes = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    return saveRes.ok;
+  } catch {
+    return false;
+  }
+}
+
 function openSettingsModal() {
   const info = detectRepoInfo();
 
@@ -1921,27 +2569,104 @@ python scripts/local_run.py --loop 360 # كل 6 ساعات</code></pre>
 async function loadConfigYaml(info) {
   const pane = document.getElementById('settings-config');
   if (pane.dataset.loaded === '1') return;
+
+  // Backend mode: editable
+  if (STATE.hasBackend) {
+    try {
+      const res = await fetch('/api/config');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const text = data.raw || '';
+      pane.innerHTML = `
+        <div class="config-viewer-head">
+          <span class="filename">config.yml</span>
+          <div>
+            <button class="btn-refresh btn-sm" id="configResetBtn">↶ إلغاء التعديل</button>
+            <button class="btn-trigger btn-sm" id="configSaveBtn">💾 حفظ</button>
+          </div>
+        </div>
+        <textarea class="config-editor" id="configEditor" spellcheck="false" dir="ltr">${escapeHtml(text)}</textarea>
+        <p class="small-note">⚠️ كن حذراً! تعديل خاطئ قد يوقف السحب. تأكد من تنسيق YAML.</p>
+      `;
+      pane.dataset.loaded = '1';
+      const originalText = text;
+      document.getElementById('configResetBtn').addEventListener('click', () => {
+        document.getElementById('configEditor').value = originalText;
+        showToast('تم إلغاء التعديلات', 'success');
+      });
+      document.getElementById('configSaveBtn').addEventListener('click', async () => {
+        const newText = document.getElementById('configEditor').value;
+        try {
+          const r = await fetch('/api/config/raw', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ raw: newText }),
+          });
+          if (r.ok) {
+            showToast('✅ تم حفظ config.yml', 'success');
+            await loadSourcesStatus();
+          } else {
+            const err = await r.json().catch(() => ({}));
+            showToast('فشل: ' + (err.error || 'خطأ'), 'error');
+          }
+        } catch (e) {
+          showToast('خطأ: ' + e.message, 'error');
+        }
+      });
+      return;
+    } catch (e) {
+      // fall through to GitHub raw
+    }
+  }
+
+  // Fallback: GitHub raw (read-only)
   try {
     const res = await fetch(`https://raw.githubusercontent.com/${info.owner}/${info.repo}/main/config.yml?t=${Date.now()}`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const text = await res.text();
     pane.innerHTML = `
       <div class="config-viewer-head">
-        <span class="filename">config.yml</span>
+        <span class="filename">config.yml (للعرض فقط - شغّل السيرفر للتعديل)</span>
         <a href="https://github.com/${info.owner}/${info.repo}/edit/main/config.yml" target="_blank" rel="noopener" class="btn-trigger btn-sm">تحرير على GitHub ↗</a>
       </div>
       <pre class="config-viewer"><code>${escapeHtml(text)}</code></pre>
     `;
     pane.dataset.loaded = '1';
   } catch (e) {
-    pane.innerHTML = `<p class="note">فشل التحميل: ${escapeHtml(e.message)}.</p>
-      <a href="https://github.com/${info.owner}/${info.repo}/blob/main/config.yml" target="_blank" rel="noopener" class="btn-trigger btn-sm">شاهد على GitHub ↗</a>`;
+    pane.innerHTML = `<p class="note">فشل التحميل: ${escapeHtml(e.message)}.</p>`;
   }
 }
 
 async function loadPagesJson(info) {
   const pane = document.getElementById('settings-pages');
   if (pane.dataset.loaded === '1') return;
+
+  // Backend mode: load from API
+  if (STATE.hasBackend) {
+    try {
+      const res = await fetch('/api/pages');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      pane.innerHTML = `
+        <div class="config-viewer-head">
+          <span class="filename">pages.json · ${(data.pages || []).length} صفحة</span>
+          <button class="btn-trigger btn-sm" id="openPagesFromSettings">📄 فتح محرّر الصفحات</button>
+        </div>
+        <pre class="config-viewer"><code>${escapeHtml(JSON.stringify(data, null, 2))}</code></pre>
+        <p class="small-note">💡 للتحرير الكامل استخدم زر "فتح محرّر الصفحات" أو زر 📄 في الأعلى.</p>
+      `;
+      pane.dataset.loaded = '1';
+      document.getElementById('openPagesFromSettings').addEventListener('click', () => {
+        closeModal();
+        setTimeout(() => openPagesModal(), 250);
+      });
+      return;
+    } catch (e) {
+      // fall through
+    }
+  }
+
+  // Fallback: GitHub raw
   try {
     const res = await fetch(`https://raw.githubusercontent.com/${info.owner}/${info.repo}/main/pages.json?t=${Date.now()}`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1952,7 +2677,6 @@ async function loadPagesJson(info) {
         <a href="https://github.com/${info.owner}/${info.repo}/edit/main/pages.json" target="_blank" rel="noopener" class="btn-trigger btn-sm">تحرير على GitHub ↗</a>
       </div>
       <pre class="config-viewer"><code>${escapeHtml(text)}</code></pre>
-      <p class="small-note">💡 يمكن أيضاً تحرير الصفحات من زر "إدارة الصفحات" 📄 في الأعلى.</p>
     `;
     pane.dataset.loaded = '1';
   } catch (e) {

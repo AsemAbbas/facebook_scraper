@@ -2,10 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "web-preview",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "serve", "web", "-p", "8080", "-L"],
-      "port": 8080
+      "name": "marsad-server",
+      "runtimeExecutable": "C:\\laragon\\bin\\python\\python-3.13\\python.exe",
+      "runtimeArgs": ["server.py"],
+      "port": 5050,
+      "env": {
+        "NO_BROWSER": "1",
+        "PORT": "5050",
+        "HOST": "127.0.0.1",
+        "PYTHONIOENCODING": "utf-8"
+      }
     }
   ]
 }
