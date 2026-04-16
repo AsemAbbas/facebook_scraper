@@ -143,7 +143,7 @@ function applyFilters() {
 
 function renderPosts() {
   const posts = STATE.filtered;
-  els.resultCount.textContent = `${posts.length.toLocaleString('ar-EG')} منشور`;
+  els.resultCount.textContent = `${posts.length.toLocaleString('en-US')} منشور`;
 
   if (posts.length === 0) {
     showEmpty('لا توجد نتائج تطابق الفلاتر الحالية');
@@ -239,7 +239,7 @@ function updateLastUpdate(iso) {
   if (diffMin < 1) text = 'الآن';
   else if (diffMin < 60) text = `قبل ${diffMin} دقيقة`;
   else if (diffMin < 1440) text = `قبل ${Math.round(diffMin / 60)} ساعة`;
-  else text = date.toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' });
+  else text = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
   els.lastUpdateText.textContent = `آخر تحديث: ${text}`;
 }
@@ -257,16 +257,17 @@ function escapeHtml(s) {
 
 function formatNum(n) {
   if (!n) return '0';
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'م';
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'ك';
-  return n.toLocaleString('ar-EG');
+  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1).replace(/\.0$/, '') + 'B';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return n.toLocaleString('en-US');
 }
 
 function formatTime(timestampText, scrapedAt) {
   if (timestampText && timestampText.length < 30) return timestampText;
   if (scrapedAt) {
-    return new Date(scrapedAt).toLocaleDateString('ar-EG', {
-      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    return new Date(scrapedAt).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
     });
   }
   return '';
