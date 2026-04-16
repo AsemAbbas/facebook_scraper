@@ -1,0 +1,31 @@
+{
+  "pages": [
+    {
+      "slug": "aljazeera",
+      "name": "قناة الجزيرة",
+      "url": "https://www.facebook.com/aljazeerachannel",
+      "max_posts": 30,
+      "source": "auto",
+      "enabled": true,
+      "tags": ["news", "arabic"]
+    },
+    {
+      "slug": "alarabiya",
+      "name": "العربية",
+      "url": "https://www.facebook.com/AlArabiya",
+      "max_posts": 30,
+      "source": "auto",
+      "enabled": true,
+      "tags": ["news", "arabic"]
+    }
+  ],
+  "_help": {
+    "slug": "معرّف فريد بالإنجليزية (بيستخدم في اسم ملف الإخراج)",
+    "name": "الاسم بالعربي يظهر في الواجهة",
+    "url": "رابط الصفحة على فيسبوك",
+    "max_posts": "عدد المنشورات المراد سحبها في كل جولة",
+    "source": "auto = استخدم الأولوية من config.yml، أو حدد مصدر: apify/fetchrss/rssapp/rsshub/playwright",
+    "enabled": "true/false لتفعيل/إيقاف الصفحة",
+    "tags": "تصنيفات اختيارية (bit معرفية)"
+  }
+}

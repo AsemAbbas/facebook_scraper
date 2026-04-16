@@ -1,0 +1,13 @@
+# ====================================
+# مَرصَد · Multi-Source Facebook Monitor
+# ====================================
+
+# Core
+pyyaml>=6.0.1          # قراءة config.yml
+aiohttp>=3.9.0         # HTTP async requests (لكل الـ RSS sources و Apify)
+
+# Playwright (اختياري - فعّل لو تستخدم playwright source)
+playwright>=1.40.0
+
+# Telegram (اختياري)
+# requests>=2.31.0     # aiohttp كافي، لكن سكريبت Telegram يستخدم requests

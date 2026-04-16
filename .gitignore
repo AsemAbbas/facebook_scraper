@@ -1,0 +1,84 @@
+# ====================================
+# Python
+# ====================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# ====================================
+# Secrets & local config
+# ====================================
+.env
+.env.local
+.env.*.local
+service_account.json
+credentials.json
+*.key
+*.pem
+
+# ====================================
+# Marsad specific
+# ====================================
+# البيانات الخام للتطوير
+docs/debug_raw/
+*.log
+
+# ملفات قديمة (تم أرشفتها في docs/)
+# docs/legacy_* هي للرجوع، بتظل في الريبو
+
+# ====================================
+# Node.js (لو استخدمنا أي JS tools)
+# ====================================
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+
+# ====================================
+# IDEs
+# ====================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ====================================
+# Playwright
+# ====================================
+playwright-report/
+test-results/
+.playwright/
+
+# ====================================
+# Claude Code
+# ====================================
+# .claude/launch.json يُشارك - هو للمشروع
+# لكن أي شيء آخر محلي:
+.claude/cache/
+.claude/sessions/

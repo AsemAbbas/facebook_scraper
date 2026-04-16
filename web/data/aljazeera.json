@@ -1,0 +1,43 @@
+{
+  "page_slug": "aljazeera",
+  "page_name": "قناة الجزيرة",
+  "page_url": "https://www.facebook.com/aljazeerachannel",
+  "last_updated": "2026-04-16T12:00:00+00:00",
+  "total_posts": 2,
+  "posts": [
+    {
+      "post_id": "demo_aj_001",
+      "page_slug": "aljazeera",
+      "page_name": "قناة الجزيرة",
+      "page_url": "https://www.facebook.com/aljazeerachannel",
+      "text": "عاجل: تطورات جديدة في الوضع الإقليمي - مندوبنا الخاص يُغطي اللحظة بلحظة من قلب الحدث. تفاصيل أكثر في نشرة الساعة السادسة مساءً.",
+      "post_url": "https://www.facebook.com/aljazeerachannel/posts/demo001",
+      "image_url": "",
+      "video_url": "",
+      "published_at": "2026-04-16T10:30:00+00:00",
+      "scraped_at": "2026-04-16T12:00:00+00:00",
+      "timestamp_text": "قبل ساعة",
+      "reactions": 12500,
+      "comments": 845,
+      "shares": 2340,
+      "source": "apify"
+    },
+    {
+      "post_id": "demo_aj_002",
+      "page_slug": "aljazeera",
+      "page_name": "قناة الجزيرة",
+      "page_url": "https://www.facebook.com/aljazeerachannel",
+      "text": "تقرير خاص: كيف تؤثر الأحداث الاقتصادية الراهنة على الأسواق العربية؟ حوار موسع مع خبراء الاقتصاد.",
+      "post_url": "https://www.facebook.com/aljazeerachannel/posts/demo002",
+      "image_url": "",
+      "video_url": "",
+      "published_at": "2026-04-16T08:15:00+00:00",
+      "scraped_at": "2026-04-16T12:00:00+00:00",
+      "timestamp_text": "قبل 4 ساعات",
+      "reactions": 3420,
+      "comments": 156,
+      "shares": 489,
+      "source": "apify"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "last_run": "2026-04-16T12:00:00+00:00",
+  "sources_used": ["apify", "fetchrss"],
+  "total_new_posts": 4,
+  "pages": [
+    {
+      "slug": "aljazeera",
+      "name": "قناة الجزيرة",
+      "url": "https://www.facebook.com/aljazeerachannel",
+      "status": "success",
+      "source_used": "apify",
+      "total_posts": 2,
+      "new_posts": 2,
+      "last_updated": "2026-04-16T12:00:00+00:00"
+    },
+    {
+      "slug": "alarabiya",
+      "name": "العربية",
+      "url": "https://www.facebook.com/AlArabiya",
+      "status": "success",
+      "source_used": "fetchrss",
+      "total_posts": 2,
+      "new_posts": 2,
+      "last_updated": "2026-04-16T12:00:00+00:00"
+    }
+  ]
+}

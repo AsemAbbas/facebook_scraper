@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مرصد · Facebook Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@400;500;600;700&family=Amiri:wght@400;700&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- خلفية متحركة -->
+<div class="grain"></div>
+<div class="bg-decoration">
+  <div class="circle c1"></div>
+  <div class="circle c2"></div>
+</div>
+
+<!-- الرأس -->
+<header class="header">
+  <div class="header-inner">
+    <div class="brand">
+      <div class="logo-mark">
+        <span class="dot dot-1"></span>
+        <span class="dot dot-2"></span>
+        <span class="dot dot-3"></span>
+      </div>
+      <div class="brand-text">
+        <h1>مَرصَد</h1>
+        <p class="tagline">رصد منشورات صفحات فيسبوك · لأغراض إعلامية بحثية</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="last-update" id="lastUpdate">
+        <span class="pulse"></span>
+        <span id="lastUpdateText">جاري التحميل…</span>
+      </div>
+      <button class="btn-refresh" id="refreshBtn" title="تحديث البيانات">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>
+        </svg>
+        <span>تحديث</span>
+      </button>
+      <button class="btn-trigger" id="triggerBtn" title="تشغيل سحب جديد">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        <span>سحب الآن</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- الإحصاءات الرئيسية -->
+<section class="stats-bar">
+  <div class="stat">
+    <div class="stat-num" id="statPages">—</div>
+    <div class="stat-label">صفحات</div>
+  </div>
+  <div class="stat-divider"></div>
+  <div class="stat">
+    <div class="stat-num" id="statPosts">—</div>
+    <div class="stat-label">منشور</div>
+  </div>
+  <div class="stat-divider"></div>
+  <div class="stat">
+    <div class="stat-num" id="statReactions">—</div>
+    <div class="stat-label">تفاعل</div>
+  </div>
+  <div class="stat-divider"></div>
+  <div class="stat">
+    <div class="stat-num" id="statComments">—</div>
+    <div class="stat-label">تعليق</div>
+  </div>
+</section>
+
+<!-- شريط التحكم -->
+<section class="controls">
+  <div class="filter-group">
+    <label class="filter-label">الصفحة</label>
+    <select id="pageFilter" class="select">
+      <option value="all">كل الصفحات</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label class="filter-label">الترتيب</label>
+    <select id="sortFilter" class="select">
+      <option value="newest">الأحدث أولاً</option>
+      <option value="reactions">الأعلى تفاعلاً</option>
+      <option value="comments">الأكثر تعليقاً</option>
+      <option value="shares">الأكثر مشاركة</option>
+    </select>
+  </div>
+  <div class="filter-group flex-grow">
+    <label class="filter-label">بحث</label>
+    <input type="text" id="searchInput" class="input" placeholder="ابحث في نصوص المنشورات…">
+  </div>
+  <div class="filter-group">
+    <label class="filter-label">الحد الأدنى للتفاعل</label>
+    <input type="number" id="minReactions" class="input narrow" placeholder="0" min="0">
+  </div>
+  <div class="filter-group">
+    <label class="filter-label">المصدر</label>
+    <select id="sourceFilter" class="select">
+      <option value="all">كل المصادر</option>
+      <option value="apify">💎 Apify</option>
+      <option value="fetchrss">🪶 FetchRSS</option>
+      <option value="rssapp">⚡ RSS.app</option>
+      <option value="rsshub">🏠 RSSHub</option>
+      <option value="playwright">🎭 Playwright</option>
+    </select>
+  </div>
+</section>
+
+<!-- نتائج العدد -->
+<div class="results-meta">
+  <div class="meta-left">
+    <span id="resultCount">—</span>
+    <span id="sourcesUsed" class="sources-used"></span>
+  </div>
+  <button class="btn-export" id="exportBtn">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>
+    تصدير CSV
+  </button>
+</div>
+
+<!-- شبكة المنشورات -->
+<main class="posts-grid" id="postsGrid">
+  <div class="loading">
+    <div class="spinner"></div>
+    <p>جاري تحميل المنشورات…</p>
+  </div>
+</main>
+
+<!-- التذييل -->
+<footer class="footer">
+  <p>مَرصَد · مفتوح المصدر · يعمل عبر GitHub Actions + Pages</p>
+  <p class="warning">⚠️ هذا المشروع للأغراض البحثية والصحفية فقط · سحب البيانات الآلي يخالف شروط فيسبوك</p>
+</footer>
+
+<!-- Modal للإعدادات/التشغيل -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <button class="modal-close" id="modalClose">×</button>
+    <h2 id="modalTitle">تشغيل سحب جديد</h2>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
