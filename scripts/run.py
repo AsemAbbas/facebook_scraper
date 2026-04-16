@@ -110,7 +110,13 @@ class MarsadOrchestrator:
 
     # ==================== Main Flow ====================
 
-    async def run(self, slug_filter: str | None = None, force_source: str | None = None) -> None:
+    async def run(
+        self,
+        slug_filter: str | None = None,
+        force_source: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> None:
         """الـ entry point الرئيسي"""
         self._print_banner()
 
@@ -121,6 +127,8 @@ class MarsadOrchestrator:
         print(f"🔌 المصادر المفعّلة (حسب الأولوية):")
         for s in self.sources:
             print(f"   [{s.priority}] {s.source_name}")
+        if date_from or date_to:
+            print(f"📅 نطاق التاريخ: {date_from or '—'} → {date_to or '—'}")
         print()
 
         # فلترة الصفحات
@@ -139,6 +147,8 @@ class MarsadOrchestrator:
             "pages": [],
             "sources_used": [],
             "total_new_posts": 0,
+            "date_from": date_from,
+            "date_to": date_to,
         }
 
         # سحب كل صفحة
@@ -147,7 +157,7 @@ class MarsadOrchestrator:
             print(f"📌 {page['name']} ({page['slug']})")
             print(f"{'=' * 60}")
 
-            result = await self._scrape_single_page(page, force_source)
+            result = await self._scrape_single_page(page, force_source, date_from, date_to)
             summary["pages"].append(result)
 
             if result.get("source_used") and result["source_used"] not in summary["sources_used"]:
@@ -164,6 +174,8 @@ class MarsadOrchestrator:
         self,
         page: dict,
         force_source: str | None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> dict:
         """سحب صفحة واحدة مع fallback"""
         slug = page["slug"]
@@ -171,6 +183,10 @@ class MarsadOrchestrator:
         url = page["url"]
         max_posts = page.get("max_posts", 20)
         preferred = page.get("source", "auto")  # auto أو اسم مصدر
+
+        # date range من الصفحة (له أولوية على الـ global)
+        page_date_from = page.get("date_from") or date_from
+        page_date_to = page.get("date_to") or date_to
 
         # تحديد أي المصادر نجرب
         candidates = self._select_sources_for_page(preferred, force_source)
@@ -192,7 +208,11 @@ class MarsadOrchestrator:
             attempts += 1
 
             try:
-                new_posts = await source.scrape_page(url, slug, name, max_posts)
+                new_posts = await source.scrape_page(
+                    url, slug, name, max_posts,
+                    date_from=page_date_from,
+                    date_to=page_date_to,
+                )
 
                 if not new_posts:
                     print(f"  ⚠️  {source.source_name}: ما رجع أي منشور")
@@ -379,6 +399,8 @@ def main():
     parser = argparse.ArgumentParser(description="مَرصَد - سحب منشورات صفحات فيسبوك")
     parser.add_argument("--slug", help="سحب صفحة محددة فقط")
     parser.add_argument("--source", help="إجبار مصدر محدد (apify/fetchrss/rssapp/rsshub/playwright)")
+    parser.add_argument("--date-from", help="أقدم تاريخ (ISO 8601، مثل 2026-04-01)")
+    parser.add_argument("--date-to", help="أحدث تاريخ (ISO 8601، مثل 2026-04-16)")
     parser.add_argument(
         "--config",
         default=str(PROJECT_ROOT / "config.yml"),
@@ -405,6 +427,8 @@ def main():
     asyncio.run(orchestrator.run(
         slug_filter=args.slug,
         force_source=args.source,
+        date_from=args.date_from,
+        date_to=args.date_to,
     ))
 
 

@@ -14,6 +14,7 @@ RSS.app بيعطيك RSS URL مباشر، بس نقرأه.
 
 import asyncio
 import xml.etree.ElementTree as ET
+from typing import Optional
 
 import aiohttp
 
@@ -53,6 +54,8 @@ class RSSAppSource(BaseScraper):
         page_slug: str,
         page_name: str,
         max_posts: int = 20,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> list[UnifiedPost]:
         feed_url = self._resolve_feed_url(page_url)
         if not feed_url:
@@ -74,7 +77,9 @@ class RSSAppSource(BaseScraper):
         except aiohttp.ClientError as e:
             raise SourceUnavailableError(f"[rssapp] خطأ شبكة: {e}") from e
 
-        return self._parse_rss(xml_text, page_slug, page_name, page_url, max_posts)
+        posts = self._parse_rss(xml_text, page_slug, page_name, page_url, max_posts * 2)
+        posts = self.filter_by_date(posts, date_from, date_to)
+        return posts[:max_posts]
 
     def _resolve_feed_url(self, url_or_feed: str) -> str:
         """

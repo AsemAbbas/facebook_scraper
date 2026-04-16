@@ -14,6 +14,7 @@ FetchRSS Source
 
 import asyncio
 import xml.etree.ElementTree as ET
+from typing import Optional
 from urllib.parse import quote, urljoin
 
 import aiohttp
@@ -65,6 +66,8 @@ class FetchRSSSource(BaseScraper):
         page_slug: str,
         page_name: str,
         max_posts: int = 20,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> list[UnifiedPost]:
         """
         يحتاج الـ page أن يكون فيه "source_config.fetchrss_feed_id" في pages.json
@@ -94,7 +97,10 @@ class FetchRSSSource(BaseScraper):
         except aiohttp.ClientError as e:
             raise SourceUnavailableError(f"[fetchrss] خطأ شبكة: {e}") from e
 
-        return self._parse_rss(xml_text, page_slug, page_name, page_url, max_posts)
+        posts = self._parse_rss(xml_text, page_slug, page_name, page_url, max_posts * 2)
+        # فلترة التاريخ post-fetch (RSS ما يقبل date params)
+        posts = self.filter_by_date(posts, date_from, date_to)
+        return posts[:max_posts]
 
     def _resolve_feed_url(self, page_url_or_feed: str) -> str:
         """

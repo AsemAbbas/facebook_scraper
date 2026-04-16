@@ -14,6 +14,7 @@ Facebook Routes:
 
 import asyncio
 import xml.etree.ElementTree as ET
+from typing import Optional
 from urllib.parse import urlparse
 
 import aiohttp
@@ -52,6 +53,8 @@ class RSSHubSource(BaseScraper):
         page_slug: str,
         page_name: str,
         max_posts: int = 20,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> list[UnifiedPost]:
         # حوّل Facebook URL لـ RSSHub route
         feed_url = self._build_rsshub_url(page_url)
@@ -76,7 +79,9 @@ class RSSHubSource(BaseScraper):
         except aiohttp.ClientError as e:
             raise SourceUnavailableError(f"[rsshub] خطأ شبكة: {e}") from e
 
-        return self._parse_rss(xml_text, page_slug, page_name, page_url, max_posts)
+        posts = self._parse_rss(xml_text, page_slug, page_name, page_url, max_posts * 2)
+        posts = self.filter_by_date(posts, date_from, date_to)
+        return posts[:max_posts]
 
     def _build_rsshub_url(self, fb_url: str) -> str:
         """

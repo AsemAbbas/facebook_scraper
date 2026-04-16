@@ -19,6 +19,8 @@ from typing import Any
 
 import aiohttp
 
+from typing import Optional
+
 from .base import BaseScraper, UnifiedPost, SourceUnavailableError, RateLimitError
 from .normalizer import PostNormalizer as N
 
@@ -67,6 +69,8 @@ class ApifySource(BaseScraper):
         page_slug: str,
         page_name: str,
         max_posts: int = 20,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> list[UnifiedPost]:
         if not self.token:
             raise SourceUnavailableError(
@@ -74,9 +78,11 @@ class ApifySource(BaseScraper):
             )
 
         print(f"  💎 [apify] تشغيل actor للصفحة: {page_url}")
+        if date_from or date_to:
+            print(f"     📅 نطاق التاريخ: {date_from or '—'} → {date_to or '—'}")
 
-        # 1. شغّل الـ Actor
-        run_id = await self._start_run(page_url, max_posts)
+        # 1. شغّل الـ Actor (مع date range لو مدعوم)
+        run_id = await self._start_run(page_url, max_posts, date_from, date_to)
         print(f"    ⏳ Run ID: {run_id} - في انتظار الانتهاء...")
 
         # 2. انتظر حتى ينتهي
@@ -85,20 +91,29 @@ class ApifySource(BaseScraper):
         # 3. اسحب النتائج
         items = await self._fetch_results(dataset_id)
 
-        # 4. حوّل لـ UnifiedPost
+        # 4. حوّل لـ UnifiedPost + فلترة التاريخ
         posts: list[UnifiedPost] = []
-        for item in items[:max_posts]:
+        for item in items[:max_posts * 2]:  # اسحب ضعف العدد لأن فيه فلترة
             post = self._normalize_item(item, page_slug, page_name, page_url)
             if post and post.is_valid():
-                posts.append(post)
-                preview = post.text[:50].replace("\n", " ")
-                print(f"    ✓ #{len(posts)}: {preview}")
+                if self.post_in_date_range(post, date_from, date_to):
+                    posts.append(post)
+                    preview = post.text[:50].replace("\n", " ")
+                    print(f"    ✓ #{len(posts)}: {preview}")
+                    if len(posts) >= max_posts:
+                        break
 
         return posts
 
     # ==================== Apify API Calls ====================
 
-    async def _start_run(self, page_url: str, max_posts: int) -> str:
+    async def _start_run(
+        self,
+        page_url: str,
+        max_posts: int,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> str:
         """تشغيل actor وإرجاع run_id"""
         input_data = {
             "startUrls": [{"url": page_url}],
@@ -108,6 +123,12 @@ class ApifySource(BaseScraper):
                 "apifyProxyGroups": ["RESIDENTIAL"],
             },
         }
+
+        # Apify's FB scraper يدعم onlyPostsNewerThan/onlyPostsOlderThan
+        if date_from:
+            input_data["onlyPostsNewerThan"] = date_from
+        if date_to:
+            input_data["onlyPostsOlderThan"] = date_to
 
         url = f"{APIFY_BASE}/acts/{self.actor_id_url}/runs"
 

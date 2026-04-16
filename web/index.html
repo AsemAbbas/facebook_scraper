@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>مرصد · Facebook Monitor</title>
+<title>مَرصَد · Facebook Monitor</title>
+<meta name="description" content="أداة رصد منشورات صفحات فيسبوك - متعددة المصادر">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
@@ -12,7 +13,6 @@
 <body>
 
 <!-- خلفية متحركة -->
-<div class="grain"></div>
 <div class="bg-decoration">
   <div class="circle c1"></div>
   <div class="circle c2"></div>
@@ -37,14 +37,24 @@
         <span class="pulse"></span>
         <span id="lastUpdateText">جاري التحميل…</span>
       </div>
+      <button class="btn-icon" id="setupBtn" title="دليل الإعداد">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </button>
+      <button class="btn-icon" id="managePagesBtn" title="إدارة الصفحات">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+        </svg>
+      </button>
       <button class="btn-refresh" id="refreshBtn" title="تحديث البيانات">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>
         </svg>
         <span>تحديث</span>
       </button>
       <button class="btn-trigger" id="triggerBtn" title="تشغيل سحب جديد">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="5 3 19 12 5 21 5 3"/>
         </svg>
         <span>سحب الآن</span>
@@ -53,7 +63,7 @@
   </div>
 </header>
 
-<!-- الإحصاءات الرئيسية -->
+<!-- الإحصاءات -->
 <section class="stats-bar">
   <div class="stat">
     <div class="stat-num" id="statPages">—</div>
@@ -73,7 +83,7 @@
   </div>
 </section>
 
-<!-- شريط التحكم -->
+<!-- شريط التحكم الأساسي -->
 <section class="controls">
   <div class="filter-group">
     <label class="filter-label">الصفحة</label>
@@ -85,18 +95,15 @@
     <label class="filter-label">الترتيب</label>
     <select id="sortFilter" class="select">
       <option value="newest">الأحدث أولاً</option>
+      <option value="oldest">الأقدم أولاً</option>
       <option value="reactions">الأعلى تفاعلاً</option>
       <option value="comments">الأكثر تعليقاً</option>
       <option value="shares">الأكثر مشاركة</option>
     </select>
   </div>
   <div class="filter-group flex-grow">
-    <label class="filter-label">بحث</label>
-    <input type="text" id="searchInput" class="input" placeholder="ابحث في نصوص المنشورات…">
-  </div>
-  <div class="filter-group">
-    <label class="filter-label">الحد الأدنى للتفاعل</label>
-    <input type="number" id="minReactions" class="input narrow" placeholder="0" min="0">
+    <label class="filter-label">بحث في النصوص</label>
+    <input type="text" id="searchInput" class="input" placeholder="ابحث…">
   </div>
   <div class="filter-group">
     <label class="filter-label">المصدر</label>
@@ -109,13 +116,62 @@
       <option value="playwright">🎭 Playwright</option>
     </select>
   </div>
+  <button class="btn-toggle-advanced" id="toggleAdvanced" type="button">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+    </svg>
+    <span>فلاتر متقدمة</span>
+  </button>
 </section>
 
-<!-- نتائج العدد -->
+<!-- الفلاتر المتقدمة (مخفية افتراضياً) -->
+<section class="advanced-filters" id="advancedFilters" hidden>
+  <div class="filter-group">
+    <label class="filter-label">من تاريخ</label>
+    <input type="date" id="dateFrom" class="input">
+  </div>
+  <div class="filter-group">
+    <label class="filter-label">إلى تاريخ</label>
+    <input type="date" id="dateTo" class="input">
+  </div>
+  <div class="filter-group">
+    <label class="filter-label">الحد الأدنى للتفاعل</label>
+    <input type="number" id="minReactions" class="input" placeholder="0" min="0">
+  </div>
+  <div class="filter-group">
+    <label class="filter-label">الحد الأدنى للتعليقات</label>
+    <input type="number" id="minComments" class="input" placeholder="0" min="0">
+  </div>
+  <div class="filter-group">
+    <label class="filter-label">خيارات</label>
+    <div class="filter-checkboxes">
+      <label class="checkbox-chip">
+        <input type="checkbox" id="hasImageOnly">
+        <span>بصور فقط</span>
+      </label>
+      <label class="checkbox-chip">
+        <input type="checkbox" id="highEngagementOnly">
+        <span>تفاعل عالٍ</span>
+      </label>
+    </div>
+  </div>
+  <div class="filter-group">
+    <label class="filter-label">&nbsp;</label>
+    <button class="btn-reset-filters" id="resetFilters" type="button">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+      </svg>
+      إعادة تعيين
+    </button>
+  </div>
+</section>
+
+<!-- نتائج العدد + تصدير -->
 <div class="results-meta">
   <div class="meta-left">
     <span id="resultCount">—</span>
     <span id="sourcesUsed" class="sources-used"></span>
+    <span id="activeFiltersBadge" class="active-filters-badge" hidden></span>
   </div>
   <button class="btn-export" id="exportBtn">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -139,11 +195,11 @@
   <p class="warning">⚠️ هذا المشروع للأغراض البحثية والصحفية فقط · سحب البيانات الآلي يخالف شروط فيسبوك</p>
 </footer>
 
-<!-- Modal للإعدادات/التشغيل -->
+<!-- Modal عام -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
-    <button class="modal-close" id="modalClose">×</button>
-    <h2 id="modalTitle">تشغيل سحب جديد</h2>
+    <button class="modal-close" id="modalClose" aria-label="إغلاق">×</button>
+    <h2 id="modalTitle">—</h2>
     <div id="modalBody"></div>
   </div>
 </div>

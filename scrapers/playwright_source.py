@@ -6,7 +6,7 @@ Playwright Source
 """
 
 import asyncio
-from typing import Any
+from typing import Any, Optional
 
 from .base import BaseScraper, UnifiedPost, SourceUnavailableError
 from .normalizer import PostNormalizer as N
@@ -46,6 +46,8 @@ class PlaywrightSource(BaseScraper):
         page_slug: str,
         page_name: str,
         max_posts: int = 20,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> list[UnifiedPost]:
         try:
             from playwright.async_api import async_playwright
@@ -53,6 +55,9 @@ class PlaywrightSource(BaseScraper):
             raise SourceUnavailableError(
                 "Playwright غير مثبت. شغّل: pip install playwright && playwright install chromium"
             ) from e
+
+        # ملاحظة: Playwright ما بيعطي published_at دقيق،
+        # فالـ date filtering في Playwright محدود. نعمل post-fetch filtering.
 
         # استخدم mbasic إذا طُلب
         if self.use_mbasic and "www.facebook.com" in page_url:
@@ -122,6 +127,8 @@ class PlaywrightSource(BaseScraper):
             finally:
                 await browser.close()
 
+        # Date filter (بعض المنشورات published_at قد يكون فاضي)
+        posts = self.filter_by_date(posts, date_from, date_to)
         return posts
 
     async def _close_login_popups(self, page) -> None:

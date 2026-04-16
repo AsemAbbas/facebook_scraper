@@ -7,7 +7,7 @@ Base Scraper Abstract Class
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass
@@ -94,6 +94,8 @@ class BaseScraper(ABC):
         page_slug: str,
         page_name: str,
         max_posts: int = 20,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> list[UnifiedPost]:
         """
         سحب منشورات من صفحة واحدة.
@@ -106,6 +108,8 @@ class BaseScraper(ABC):
             page_slug: slug الصفحة (للتعريف)
             page_name: اسم الصفحة بالعربي
             max_posts: الحد الأقصى للمنشورات
+            date_from: أقدم تاريخ للمنشورات (ISO 8601) - اختياري
+            date_to: أحدث تاريخ للمنشورات (ISO 8601) - اختياري
 
         Returns:
             قائمة من UnifiedPost
@@ -136,6 +140,59 @@ class BaseScraper(ABC):
         if raw_id:
             return str(raw_id)
         return f"hash_{abs(hash(fallback_text[:100]))}"
+
+    @staticmethod
+    def post_in_date_range(
+        post: UnifiedPost,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> bool:
+        """
+        فحص هل المنشور ضمن النطاق الزمني.
+        لو ما عنده published_at، يعتبره ضمن النطاق (ما نرفضه).
+        """
+        if not date_from and not date_to:
+            return True
+        if not post.published_at:
+            return True  # لا نرفض بدون تاريخ
+
+        try:
+            post_dt = datetime.fromisoformat(post.published_at.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+
+        if date_from:
+            try:
+                from_dt = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
+                if from_dt.tzinfo is None:
+                    from_dt = from_dt.replace(tzinfo=timezone.utc)
+                if post_dt < from_dt:
+                    return False
+            except ValueError:
+                pass
+
+        if date_to:
+            try:
+                to_dt = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
+                if to_dt.tzinfo is None:
+                    to_dt = to_dt.replace(tzinfo=timezone.utc)
+                if post_dt > to_dt:
+                    return False
+            except ValueError:
+                pass
+
+        return True
+
+    @staticmethod
+    def filter_by_date(
+        posts: list[UnifiedPost],
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> list[UnifiedPost]:
+        """فلترة قائمة منشورات حسب النطاق الزمني"""
+        if not date_from and not date_to:
+            return posts
+        return [p for p in posts if BaseScraper.post_in_date_range(p, date_from, date_to)]
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} enabled={self.enabled} priority={self.priority}>"
