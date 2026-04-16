@@ -4,21 +4,21 @@
       "slug": "aljazeera",
       "name": "قناة الجزيرة",
       "url": "https://www.facebook.com/aljazeerachannel",
-      "max_posts": 10,
-      "source": "auto",
+      "max_posts": 30,
+      "source": "playwright",
       "enabled": true,
-      "tags": ["news", "arabic"]
+      "date_from": "2026-04-15",
+      "date_to": "2026-04-16"
+    },
+    {
+      "slug": "alarabiya",
+      "name": "العربية",
+      "url": "https://www.facebook.com/AlArabiya",
+      "max_posts": 30,
+      "source": "playwright",
+      "enabled": true,
+      "date_from": "2026-04-15",
+      "date_to": "2026-04-16"
     }
-  ],
-  "_help": {
-    "slug": "معرّف فريد بالإنجليزية (بيستخدم في اسم ملف الإخراج)",
-    "name": "الاسم بالعربي يظهر في الواجهة",
-    "url": "رابط الصفحة على فيسبوك",
-    "max_posts": "عدد المنشورات المراد سحبها في كل جولة (مثل 30)",
-    "source": "auto = استخدم الأولوية من config.yml، أو حدد مصدر: apify/fetchrss/rssapp/rsshub/playwright",
-    "enabled": "true/false لتفعيل/إيقاف الصفحة",
-    "tags": "تصنيفات اختيارية",
-    "date_from": "اختياري - أقدم تاريخ للمنشورات (مثل: 2026-04-01)",
-    "date_to": "اختياري - أحدث تاريخ للمنشورات (مثل: 2026-04-16)"
-  }
+  ]
 }
