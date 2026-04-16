@@ -7,8 +7,8 @@
       "url": "https://www.facebook.com/aljazeerachannel",
       "status": "success",
       "source_used": "playwright",
-      "total_posts": 20,
-      "new_posts": 10,
+      "total_posts": 21,
+      "new_posts": 11,
       "last_updated": "2026-04-16T19:07:42.805626+00:00"
     },
     {
@@ -42,6 +42,7 @@
     }
   ],
   "sources_used": [
+    "apify",
     "playwright"
   ],
   "total_new_posts": 32,

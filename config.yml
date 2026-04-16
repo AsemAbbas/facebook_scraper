@@ -26,6 +26,12 @@ sources:
     actor_id: "apify/facebook-posts-scraper"
     timeout_seconds: 600
     max_retries: 2
+    # خيارات متقدمة (Apify فقط)
+    include_comments: true              # سحب التعليقات أيضاً
+    max_comments_per_post: 10           # أقصى تعليقات لكل منشور
+    include_reactions_breakdown: true   # تفاصيل التفاعلات (like/love/...)
+    include_videos: true                # تحميل روابط الفيديو
+    include_external_links: true        # روابط خارجية في المنشور
 
   # 🪶 FetchRSS - الأرخص ($9.95/شهر - Advanced plan)
   # https://fetchrss.com
@@ -63,10 +69,31 @@ sources:
     scroll_pause_seconds: 2.5
     user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     use_mbasic: false
+    extract_all_media: true             # كل صور/فيديو، مش بس أول واحد
+    extract_external_links: true        # روابط خارجية في المنشور
     browser_args:
       - "--disable-blink-features=AutomationControlled"
       - "--no-sandbox"
       - "--disable-dev-shm-usage"
+
+# ---------------------------------------------------------------------
+# 🎯 خيارات السحب العامة (مطبقة على كل المصادر)
+# ---------------------------------------------------------------------
+scraping:
+  # فلاتر عند السحب (server-side)
+  required_keywords: []        # فقط منشورات تحتوي إحدى الكلمات
+  excluded_keywords: []        # تجاهل منشورات تحتوي إحدى الكلمات
+  min_text_length: 5           # تجاهل المنشورات أقصر من X حرف
+  skip_pinned: false           # تجاهل المنشور المثبت
+  skip_sponsored: true         # تجاهل المنشورات الممولة
+  language_filter: ""          # ar | en | "" (للكل)
+  # خيارات التعليقات
+  fetch_comments: true         # حاول جلب التعليقات (إن دعمها المصدر)
+  comment_min_likes: 0         # عرض فقط التعليقات بأعلى عدد إعجاب
+  # تنظيف
+  remove_emojis: false
+  remove_urls: false
+  trim_text_to: 2000
 
 # ---------------------------------------------------------------------
 # 🔄 إعدادات الـ Fallback

@@ -11,6 +11,29 @@ from typing import Any, Optional
 
 
 @dataclass
+class CommentData:
+    """تعليق واحد على منشور"""
+    comment_id: str = ""
+    author_name: str = ""
+    author_url: str = ""
+    text: str = ""
+    created_at: str = ""
+    likes: int = 0
+    replies_count: int = 0
+
+
+@dataclass
+class MediaItem:
+    """صورة أو فيديو أو مرفق"""
+    type: str = "image"  # image | video | gif | external_link
+    url: str = ""
+    thumbnail: str = ""
+    width: int = 0
+    height: int = 0
+    duration_seconds: int = 0  # للفيديوهات
+
+
+@dataclass
 class UnifiedPost:
     """
     Schema الموحّد لأي منشور، مهما كان المصدر.
@@ -18,41 +41,78 @@ class UnifiedPost:
     """
 
     # معرّفات
-    post_id: str                      # معرّف فريد للمنشور
-    page_slug: str                    # slug الصفحة (من pages.json)
-    page_name: str                    # اسم الصفحة بالعربي
-    page_url: str                     # رابط الصفحة الأصلي
+    post_id: str
+    page_slug: str
+    page_name: str
+    page_url: str
 
-    # المحتوى
-    text: str = ""                    # نص المنشور
-    post_url: str = ""                # رابط المنشور المباشر
-    image_url: str = ""               # رابط أول صورة (إن وُجدت)
-    video_url: str = ""               # رابط فيديو (إن وُجد)
+    # المحتوى الأساسي
+    text: str = ""
+    post_url: str = ""
+
+    # الميديا (التوافق مع القديم: image_url + video_url)
+    image_url: str = ""               # أول صورة (للتوافق الخلفي)
+    video_url: str = ""               # أول فيديو (للتوافق الخلفي)
+    media: list[dict] = field(default_factory=list)  # كل الميديا
 
     # التواريخ
-    published_at: str = ""            # وقت النشر (ISO 8601)
-    scraped_at: str = ""              # وقت السحب
-    timestamp_text: str = ""          # النص الأصلي للوقت ("قبل 3 ساعات")
+    published_at: str = ""
+    scraped_at: str = ""
+    timestamp_text: str = ""
 
-    # التفاعلات (0 لو المصدر ما يوفرها - مثل RSS)
+    # التفاعلات
     reactions: int = 0
     comments: int = 0
     shares: int = 0
 
+    # تفاصيل التفاعلات (إن توفّرت من المصدر)
+    reactions_breakdown: dict = field(default_factory=dict)
+    # مثال: {"like": 100, "love": 50, "haha": 5, "wow": 2, "sad": 1, "angry": 0}
+
+    # التعليقات الفعلية (لو المصدر يدعمها مثل Apify)
+    comments_data: list[dict] = field(default_factory=list)
+
+    # معلومات الكاتب (إن توفّرت)
+    author_name: str = ""
+    author_url: str = ""
+
     # meta
-    source: str = "unknown"           # apify | fetchrss | rssapp | rsshub | playwright
-    raw: dict = field(default_factory=dict)  # البيانات الأصلية (للـ debugging)
+    source: str = "unknown"
+    post_type: str = "text"  # text | photo | video | live | event | link
+    tags: list[str] = field(default_factory=list)
+    hashtags: list[str] = field(default_factory=list)
+    mentions: list[str] = field(default_factory=list)
+    external_links: list[str] = field(default_factory=list)
+    is_pinned: bool = False
+    is_sponsored: bool = False
+    language: str = ""
+    raw: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """تحويل لـ dict نظيف للتخزين JSON"""
         d = asdict(self)
-        # احذف الـ raw في الإخراج النهائي (حجم كبير)
         d.pop("raw", None)
         return d
 
     def is_valid(self) -> bool:
         """التحقق من الحد الأدنى من البيانات"""
         return bool(self.post_id and self.text and len(self.text) >= 5)
+
+    def derive_post_type(self) -> str:
+        """استنتاج نوع المنشور من الميديا"""
+        if self.video_url or any(m.get("type") == "video" for m in self.media):
+            return "video"
+        if self.image_url or any(m.get("type") == "image" for m in self.media):
+            return "photo"
+        if self.external_links:
+            return "link"
+        return "text"
+
+    def extract_hashtags(self) -> None:
+        """استخراج الـ hashtags من النص"""
+        import re as _re
+        if self.text and not self.hashtags:
+            self.hashtags = list(set(_re.findall(r"#(\S+)", self.text)))
 
 
 class ScraperError(Exception):

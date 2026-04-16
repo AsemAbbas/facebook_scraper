@@ -115,6 +115,11 @@ class ApifySource(BaseScraper):
         date_to: Optional[str] = None,
     ) -> str:
         """تشغيل actor وإرجاع run_id"""
+        # خيارات متقدمة من config
+        max_comments = self.config.get("max_comments_per_post", 10)
+        include_comments = self.config.get("include_comments", True)
+        include_reactions_breakdown = self.config.get("include_reactions_breakdown", True)
+
         input_data = {
             "startUrls": [{"url": page_url}],
             "resultsLimit": max_posts,
@@ -123,6 +128,13 @@ class ApifySource(BaseScraper):
                 "apifyProxyGroups": ["RESIDENTIAL"],
             },
         }
+
+        if include_comments and max_comments > 0:
+            input_data["commentsLimit"] = max_comments
+
+        if include_reactions_breakdown:
+            input_data["likedBy"] = False  # نريد العدد فقط، مش الأسماء
+            input_data["reactions"] = True
 
         # Apify's FB scraper يدعم onlyPostsNewerThan/onlyPostsOlderThan
         if date_from:
@@ -214,20 +226,7 @@ class ApifySource(BaseScraper):
         page_name: str,
         page_url: str,
     ) -> UnifiedPost | None:
-        """
-        Apify facebook-posts-scraper schema (شائع):
-        {
-          "postId": "...",
-          "text": "...",
-          "url": "...",
-          "time": "2026-04-16T10:30:00.000Z",
-          "likes": 1234,
-          "comments": 56,
-          "shares": 23,
-          "media": [{"photo_image": {"uri": "..."}}],
-          ...
-        }
-        """
+        """تحويل Apify item إلى UnifiedPost"""
         text = item.get("text") or item.get("message") or item.get("caption") or ""
         text = N.clean_text(text)
 
@@ -245,30 +244,37 @@ class ApifySource(BaseScraper):
         post_url = item.get("url") or item.get("postUrl") or ""
         post_url = N.normalize_fb_url(post_url)
 
-        # Image
-        image_url = ""
-        media = item.get("media") or []
-        if isinstance(media, list) and media:
-            first = media[0]
-            if isinstance(first, dict):
-                image_url = (
-                    first.get("photo_image", {}).get("uri")
-                    or first.get("url")
-                    or first.get("thumbnail")
+        # كل الميديا
+        media_items: list[dict] = []
+        raw_media = item.get("media") or []
+        if isinstance(raw_media, list):
+            for m in raw_media:
+                if not isinstance(m, dict):
+                    continue
+                media_url = (
+                    m.get("photo_image", {}).get("uri")
+                    or m.get("url")
+                    or m.get("thumbnail")
                     or ""
                 )
+                if not media_url:
+                    continue
+                m_type = "video" if (m.get("video_url") or m.get("playable_url")) else "image"
+                actual_url = m.get("video_url") or m.get("playable_url") or media_url
+                media_items.append({
+                    "type": m_type,
+                    "url": actual_url,
+                    "thumbnail": m.get("thumbnail") or media_url,
+                    "width": int(m.get("width") or 0),
+                    "height": int(m.get("height") or 0),
+                    "duration_seconds": int(m.get("duration") or 0),
+                })
+
+        image_url = next((m["url"] for m in media_items if m["type"] == "image"), "")
         if not image_url:
             image_url = item.get("imageUrl") or item.get("image") or ""
 
-        # Video
-        video_url = ""
-        if media:
-            for m in media if isinstance(media, list) else []:
-                if isinstance(m, dict):
-                    vu = m.get("video_url") or m.get("playable_url")
-                    if vu:
-                        video_url = vu
-                        break
+        video_url = next((m["url"] for m in media_items if m["type"] == "video"), "")
 
         # التفاعلات
         reactions = N.parse_engagement(
@@ -277,16 +283,33 @@ class ApifySource(BaseScraper):
             or item.get("likesCount")
             or item.get("reactionsCount")
         )
-        comments = N.parse_engagement(
-            item.get("comments")
-            or item.get("commentsCount")
-            or 0
-        )
-        shares = N.parse_engagement(
-            item.get("shares")
-            or item.get("sharesCount")
-            or 0
-        )
+        comments = N.parse_engagement(item.get("comments") or item.get("commentsCount") or 0)
+        shares = N.parse_engagement(item.get("shares") or item.get("sharesCount") or 0)
+
+        # تفاصيل التفاعلات
+        reactions_breakdown = {}
+        rb = item.get("reactionsBreakdown") or item.get("reactions_breakdown") or {}
+        if isinstance(rb, dict):
+            for k in ("like", "love", "haha", "wow", "sad", "angry", "care"):
+                if k in rb:
+                    reactions_breakdown[k] = int(rb[k] or 0)
+
+        # التعليقات
+        comments_data: list[dict] = []
+        raw_comments = item.get("commentsData") or item.get("comments_data") or []
+        if isinstance(raw_comments, list):
+            for c in raw_comments[:50]:  # أول 50 تعليق فقط
+                if not isinstance(c, dict):
+                    continue
+                comments_data.append({
+                    "comment_id": str(c.get("id") or c.get("commentId") or ""),
+                    "author_name": str(c.get("authorName") or c.get("name") or ""),
+                    "author_url": str(c.get("authorUrl") or c.get("profileUrl") or ""),
+                    "text": N.clean_text(c.get("text") or c.get("message") or ""),
+                    "created_at": N.parse_iso_date(c.get("date") or c.get("created_time")),
+                    "likes": int(c.get("likesCount") or c.get("likes") or 0),
+                    "replies_count": int(c.get("repliesCount") or 0),
+                })
 
         # التاريخ
         published_at = N.parse_iso_date(
@@ -296,7 +319,28 @@ class ApifySource(BaseScraper):
             or item.get("created_time")
         )
 
-        return UnifiedPost(
+        # الكاتب
+        author_name = page_name
+        author_url = page_url
+        author_obj = item.get("user") or item.get("author") or {}
+        if isinstance(author_obj, dict):
+            author_name = author_obj.get("name") or page_name
+            author_url = author_obj.get("url") or page_url
+
+        # روابط خارجية
+        external_links = []
+        for link_field in ("externalLinks", "links", "linkAttachments"):
+            val = item.get(link_field)
+            if isinstance(val, list):
+                for v in val:
+                    if isinstance(v, str) and v.startswith("http"):
+                        external_links.append(v)
+                    elif isinstance(v, dict):
+                        u = v.get("url") or v.get("href")
+                        if u:
+                            external_links.append(u)
+
+        post = UnifiedPost(
             post_id=post_id,
             page_slug=page_slug,
             page_name=page_name,
@@ -305,11 +349,22 @@ class ApifySource(BaseScraper):
             post_url=post_url,
             image_url=image_url,
             video_url=video_url,
+            media=media_items,
             published_at=published_at,
             scraped_at=self.now_iso(),
             timestamp_text="",
             reactions=reactions,
             comments=comments,
             shares=shares,
+            reactions_breakdown=reactions_breakdown,
+            comments_data=comments_data,
+            author_name=author_name,
+            author_url=author_url,
+            external_links=external_links[:5],
+            is_pinned=bool(item.get("isPinned") or item.get("pinned")),
+            is_sponsored=bool(item.get("isSponsored") or item.get("sponsored")),
             source=self.source_name,
         )
+        post.extract_hashtags()
+        post.post_type = post.derive_post_type()
+        return post

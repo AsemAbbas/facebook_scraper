@@ -3,8 +3,107 @@
   "page_name": "قناة الجزيرة",
   "page_url": "https://www.facebook.com/aljazeerachannel",
   "last_updated": "2026-04-16T19:07:42.804971+00:00",
-  "total_posts": 20,
+  "total_posts": 21,
   "posts": [
+    {
+      "post_id": "demo_apify_001",
+      "page_slug": "aljazeera",
+      "page_name": "قناة الجزيرة",
+      "page_url": "https://www.facebook.com/aljazeerachannel",
+      "text": "🔴 #عاجل | تطورات هامة على الساحة الإقليمية - تابعوا التغطية الحية على شاشة الجزيرة. هذا منشور تجريبي يوضح كل ميزات Apify (تفاعلات تفصيلية + تعليقات + ميديا متعددة). #الجزيرة #أخبار_عاجلة",
+      "post_url": "https://www.facebook.com/aljazeerachannel/posts/demo_001",
+      "image_url": "https://scontent-sof1-2.xx.fbcdn.net/v/t15.5256-10/671583097_3024575221066383_5712568869883683654_n.jpg?stp=dst-jpg_s960x960_tt6&_nc_cat=107&ccb=1-7&_nc_sid=df2c94&_nc_ohc=Uk-f94lghbEQ7kNvwHgf-b5&_nc_oc=AdpR4UXlHGy60qAb3YKojUrp_fNNnDDLE-J7_VbYQi_oImlMsDrYiw2YQR5Azt9LU96Ka1AoyjWXLQ9RwaNYLRfd&_nc_zt=23&_nc_ht=scontent-sof1-2.xx&_nc_gid=OEvURno8zYsP5yYvC7HncQ&_nc_ss=7a389&oh=00_Af030gI8yc5S5vPeFooXyTwsNhpn7W8BwVvOXWisD2rCqA&oe=69E70F51",
+      "video_url": "",
+      "media": [
+        {
+          "type": "image",
+          "url": "https://scontent-sof1-2.xx.fbcdn.net/v/t15.5256-10/671583097_3024575221066383_5712568869883683654_n.jpg?stp=dst-jpg_s960x960_tt6&_nc_cat=107&ccb=1-7&_nc_sid=df2c94&_nc_ohc=Uk-f94lghbEQ7kNvwHgf-b5&_nc_oc=AdpR4UXlHGy60qAb3YKojUrp_fNNnDDLE-J7_VbYQi_oImlMsDrYiw2YQR5Azt9LU96Ka1AoyjWXLQ9RwaNYLRfd&_nc_zt=23&_nc_ht=scontent-sof1-2.xx&_nc_gid=OEvURno8zYsP5yYvC7HncQ&_nc_ss=7a389&oh=00_Af030gI8yc5S5vPeFooXyTwsNhpn7W8BwVvOXWisD2rCqA&oe=69E70F51",
+          "thumbnail": "",
+          "width": 960,
+          "height": 540
+        },
+        {
+          "type": "image",
+          "url": "https://scontent-sof1-2.xx.fbcdn.net/v/t39.30808-6/671254299_1454115266753594_6687761329960933505_n.jpg?stp=dst-jpg_s590x590_tt6&_nc_cat=108",
+          "thumbnail": "",
+          "width": 590,
+          "height": 590
+        }
+      ],
+      "published_at": "2026-04-16T18:00:00+00:00",
+      "scraped_at": "2026-04-16T19:00:00+00:00",
+      "timestamp_text": "قبل ساعة",
+      "reactions": 12450,
+      "comments": 845,
+      "shares": 2340,
+      "reactions_breakdown": {
+        "like": 8200,
+        "love": 2300,
+        "haha": 120,
+        "wow": 980,
+        "sad": 750,
+        "angry": 100,
+        "care": 0
+      },
+      "comments_data": [
+        {
+          "comment_id": "c001",
+          "author_name": "أحمد محمد",
+          "author_url": "",
+          "text": "تغطية رائعة كالعادة من الجزيرة. شكراً للفريق على الجهود الكبيرة في نقل الأخبار بحيادية.",
+          "created_at": "2026-04-16T18:15:00+00:00",
+          "likes": 234,
+          "replies_count": 12
+        },
+        {
+          "comment_id": "c002",
+          "author_name": "Fatima Al-Zahra",
+          "author_url": "",
+          "text": "متابعة دائمة للجزيرة من الجزائر 🇩🇿",
+          "created_at": "2026-04-16T18:20:00+00:00",
+          "likes": 189,
+          "replies_count": 5
+        },
+        {
+          "comment_id": "c003",
+          "author_name": "محمود السيد",
+          "author_url": "",
+          "text": "نطالب بمزيد من التحقيقات الاستقصائية حول هذا الملف",
+          "created_at": "2026-04-16T18:30:00+00:00",
+          "likes": 145,
+          "replies_count": 8
+        },
+        {
+          "comment_id": "c004",
+          "author_name": "سارة العتيبي",
+          "author_url": "",
+          "text": "الله يحفظ الجميع 🙏",
+          "created_at": "2026-04-16T18:45:00+00:00",
+          "likes": 87,
+          "replies_count": 0
+        },
+        {
+          "comment_id": "c005",
+          "author_name": "Khalid Hassan",
+          "author_url": "",
+          "text": "أين باقي التفاصيل؟ نحتاج تقرير كامل",
+          "created_at": "2026-04-16T18:55:00+00:00",
+          "likes": 56,
+          "replies_count": 3
+        }
+      ],
+      "author_name": "قناة الجزيرة",
+      "author_url": "https://www.facebook.com/aljazeerachannel",
+      "source": "apify",
+      "post_type": "photo",
+      "tags": ["news", "breaking"],
+      "hashtags": ["عاجل", "الجزيرة", "أخبار_عاجلة"],
+      "mentions": [],
+      "external_links": ["https://www.aljazeera.net/news/breaking"],
+      "is_pinned": true,
+      "is_sponsored": false,
+      "language": "ar"
+    },
     {
       "post_id": "2864288627249118",
       "page_slug": "aljazeera",

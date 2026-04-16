@@ -202,7 +202,13 @@ class PlaywrightSource(BaseScraper):
         # التفاعلات - استخراج من الـ aria-label مباشرة (أدق)
         reactions, comments, shares = await self._extract_engagement(article)
 
-        return UnifiedPost(
+        # كل الميديا (مش بس أول صورة)
+        media = await self._extract_all_media(article)
+
+        # روابط خارجية
+        external_links = await self._extract_external_links(article, post_url)
+
+        post = UnifiedPost(
             post_id=post_id,
             page_slug=page_slug,
             page_name=page_name,
@@ -210,14 +216,79 @@ class PlaywrightSource(BaseScraper):
             text=N.truncate(text, 2000),
             post_url=post_url,
             image_url=image_url,
-            published_at="",  # Facebook ما بيعطي تاريخ دقيق بدون login
+            video_url=next((m["url"] for m in media if m.get("type") == "video"), ""),
+            media=media,
+            published_at="",
             scraped_at=self.now_iso(),
             timestamp_text=N.clean_text(timestamp_text),
             reactions=reactions,
             comments=comments,
             shares=shares,
+            external_links=external_links,
             source=self.source_name,
+            author_name=page_name,
         )
+        post.extract_hashtags()
+        post.post_type = post.derive_post_type()
+        return post
+
+    async def _extract_all_media(self, article: Any) -> list[dict]:
+        """استخراج كل الصور والفيديوهات من المنشور"""
+        media = []
+        try:
+            imgs = article.locator("img")
+            count = await imgs.count()
+            for i in range(min(count, 8)):
+                try:
+                    src = await imgs.nth(i).get_attribute("src", timeout=500)
+                    if src and "fbcdn" in src and "emoji" not in src:
+                        # تأكد ما تكرر
+                        if not any(m["url"] == src for m in media):
+                            media.append({"type": "image", "url": src,
+                                          "thumbnail": "", "width": 0, "height": 0})
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        try:
+            videos = article.locator("video")
+            vcount = await videos.count()
+            for i in range(min(vcount, 3)):
+                try:
+                    src = await videos.nth(i).get_attribute("src", timeout=500)
+                    if src:
+                        media.append({"type": "video", "url": src,
+                                      "thumbnail": "", "width": 0, "height": 0})
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return media
+
+    async def _extract_external_links(self, article: Any, post_url: str) -> list[str]:
+        """استخراج روابط خارجية من المنشور"""
+        links = []
+        try:
+            anchors = article.locator('a[href]')
+            count = await anchors.count()
+            for i in range(min(count, 20)):
+                try:
+                    href = await anchors.nth(i).get_attribute("href", timeout=300)
+                    if not href:
+                        continue
+                    # تجاهل روابط فيسبوك الداخلية
+                    if "facebook.com" in href and href != post_url:
+                        continue
+                    if href.startswith("http") and "facebook.com" not in href:
+                        if href not in links:
+                            links.append(href)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return links[:5]
 
     async def _extract_engagement(self, article: Any) -> tuple[int, int, int]:
         """
