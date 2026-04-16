@@ -199,16 +199,8 @@ class PlaywrightSource(BaseScraper):
         except Exception:
             pass
 
-        # التفاعلات
-        reactions = await self._safe_extract_number(
-            article, '[aria-label*="reaction"], [aria-label*="إعجاب"]'
-        )
-        comments = await self._safe_extract_number(
-            article, '[aria-label*="comment"], [aria-label*="تعليق"]'
-        )
-        shares = await self._safe_extract_number(
-            article, '[aria-label*="share"], [aria-label*="مشاركة"]'
-        )
+        # التفاعلات - استخراج من الـ aria-label مباشرة (أدق)
+        reactions, comments, shares = await self._extract_engagement(article)
 
         return UnifiedPost(
             post_id=post_id,
@@ -227,12 +219,93 @@ class PlaywrightSource(BaseScraper):
             source=self.source_name,
         )
 
-    @staticmethod
-    async def _safe_extract_number(article: Any, selector: str) -> int:
-        """محاولة استخراج رقم تفاعل بأمان"""
+    async def _extract_engagement(self, article: Any) -> tuple[int, int, int]:
+        """
+        استخراج التفاعلات من aria-label مباشرة.
+        فيسبوك يضع أرقام التفاعل في aria-label بالشكل:
+          "12 reactions, 5 comments, 3 shares"
+          "12 reactions"
+          "Like: 12 people"
+        """
+        reactions = 0
+        comments = 0
+        shares = 0
+
+        # جرّب قراءة all aria-labels ذات العلاقة
         try:
-            element = article.locator(selector).first
-            text = await element.inner_text(timeout=1000)
-            return N.parse_engagement(text)
+            # Reactions: element بعنوان "XX reactions"
+            react_els = article.locator(
+                'span[aria-label*="reaction" i], span[aria-label*="إعجاب"], '
+                'div[aria-label*="reaction" i][role="button"], '
+                'div[aria-label*="Like:" i]'
+            )
+            n = await react_els.count()
+            for i in range(min(n, 3)):
+                try:
+                    label = await react_els.nth(i).get_attribute("aria-label", timeout=500)
+                    if label:
+                        num = self._extract_first_number(label)
+                        if 0 < num < 10_000_000:  # حد عقلاني
+                            reactions = max(reactions, num)
+                except Exception:
+                    continue
         except Exception:
+            pass
+
+        # Comments + Shares: نفس التقنية
+        try:
+            comm_els = article.locator(
+                'span[aria-label*="comment" i], span[aria-label*="تعليق"]'
+            )
+            n = await comm_els.count()
+            for i in range(min(n, 3)):
+                try:
+                    label = await comm_els.nth(i).get_attribute("aria-label", timeout=500)
+                    if label:
+                        num = self._extract_first_number(label)
+                        if 0 < num < 5_000_000:
+                            comments = max(comments, num)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        try:
+            share_els = article.locator(
+                'span[aria-label*="share" i], span[aria-label*="مشارك"]'
+            )
+            n = await share_els.count()
+            for i in range(min(n, 3)):
+                try:
+                    label = await share_els.nth(i).get_attribute("aria-label", timeout=500)
+                    if label:
+                        num = self._extract_first_number(label)
+                        if 0 < num < 1_000_000:
+                            shares = max(shares, num)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return reactions, comments, shares
+
+    @staticmethod
+    def _extract_first_number(text: str) -> int:
+        """استخراج أول رقم من نص (مع دعم K/M)"""
+        if not text:
+            return 0
+        import re as _re
+        # حدّد الرقم المقترن بوحدة إن وُجدت
+        m = _re.search(r'([\d,.]+)\s*([KMmk]|ألف|مليون)?', text)
+        if not m:
+            return 0
+        try:
+            num = float(m.group(1).replace(',', ''))
+            unit = (m.group(2) or '').lower()
+            if unit in ('k', 'ألف'):
+                num *= 1_000
+            elif unit in ('m', 'مليون'):
+                num *= 1_000_000
+            return int(num)
+        except (ValueError, AttributeError):
             return 0

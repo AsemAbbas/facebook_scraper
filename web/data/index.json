@@ -1,5 +1,5 @@
 {
-  "last_run": "2026-04-16T18:51:29.326014+00:00",
+  "last_run": "2026-04-16T19:02:07.757985+00:00",
   "pages": [
     {
       "slug": "aljazeera",
@@ -7,15 +7,44 @@
       "url": "https://www.facebook.com/aljazeerachannel",
       "status": "success",
       "source_used": "playwright",
-      "total_posts": 10,
+      "total_posts": 20,
       "new_posts": 10,
-      "last_updated": "2026-04-16T18:53:36.829675+00:00"
+      "last_updated": "2026-04-16T19:07:42.805626+00:00"
+    },
+    {
+      "slug": "alarabiya",
+      "name": "العربية",
+      "url": "https://www.facebook.com/AlArabiya",
+      "status": "success",
+      "source_used": "playwright",
+      "total_posts": 11,
+      "new_posts": 11,
+      "last_updated": "2026-04-16T19:12:10.759726+00:00"
+    },
+    {
+      "slug": "bbcarabic",
+      "name": "BBC عربي",
+      "url": "https://www.facebook.com/bbcarabic",
+      "status": "error",
+      "error": "Page.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"https://www.facebook.com/bbcarabic\", waiting until \"domcontentloaded\"\n",
+      "total_posts": 0,
+      "new_posts": 0
+    },
+    {
+      "slug": "skynewsarabia",
+      "name": "سكاي نيوز عربية",
+      "url": "https://www.facebook.com/skynewsarabia",
+      "status": "success",
+      "source_used": "playwright",
+      "total_posts": 11,
+      "new_posts": 11,
+      "last_updated": "2026-04-16T19:17:54.712048+00:00"
     }
   ],
   "sources_used": [
     "playwright"
   ],
-  "total_new_posts": 10,
+  "total_new_posts": 32,
   "date_from": null,
   "date_to": null
 }
