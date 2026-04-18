@@ -4091,9 +4091,12 @@ button:active {
 }
 
 .user-info {
-  padding: 10px;
+  padding: 12px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .user-info strong {
@@ -4101,11 +4104,27 @@ button:active {
   font-family: var(--font-display);
   color: var(--text);
   font-size: 0.92rem;
+  line-height: 1.25;
 }
 
-.user-info span {
+.user-info #userUsernameLabel {
   font-size: 0.75rem;
   color: var(--text-muted);
+  direction: ltr;
+  font-family: var(--font-mono);
+}
+
+.user-role-chip {
+  display: inline-block !important;
+  margin-top: 4px;
+  font-size: 0.68rem !important;
+  padding: 2px 8px;
+  background: var(--ink-100);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary) !important;
+  font-weight: 700;
+  width: fit-content;
+  align-self: flex-start;
 }
 
 .dropdown-item {
@@ -4307,32 +4326,159 @@ button:active {
   margin-bottom: 1rem;
 }
 
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 .source-config-card {
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem;
-  margin-bottom: 0.75rem;
-  transition: all 0.2s;
+  transition: all 0.2s var(--ease);
+  overflow: hidden;
+  user-select: none;
 }
 
 .source-config-card.enabled {
   border-color: var(--success);
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.04), transparent);
+}
+
+.source-config-card.disabled {
+  opacity: 0.75;
+}
+
+.source-config-card.disabled:hover {
+  opacity: 1;
+}
+
+.source-config-card.expanded {
+  box-shadow: var(--shadow-md);
+}
+
+/* Drag states */
+.source-config-card.dragging {
+  opacity: 0.4;
+  cursor: grabbing !important;
+}
+
+.source-config-card.drag-over {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-50);
+  transform: translateY(-1px);
+}
+
+.source-config-card[draggable="true"] {
+  cursor: grab;
+}
+
+.source-config-card[draggable="true"]:active {
+  cursor: grabbing;
 }
 
 .source-config-head {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.source-config-head:hover {
+  background: var(--ink-50);
+}
+
+.source-drag-handle {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: 4px;
+  cursor: grab;
+  transition: color 0.15s;
+  display: flex;
+  align-items: center;
+}
+
+.source-drag-handle:hover {
+  color: var(--text);
+  background: var(--ink-100);
+}
+
+.source-drag-handle:active {
+  cursor: grabbing;
+}
+
+.source-priority-badge {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.source-config-card.disabled .source-priority-badge {
+  background: var(--ink-300);
+}
+
+.source-config-card.enabled .source-priority-badge {
+  background: var(--success);
 }
 
 .source-config-info {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex: 1;
   min-width: 0;
+  align-items: center;
+}
+
+.source-config-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.source-collapse-btn {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+  transition: all 0.15s;
+}
+
+.source-collapse-btn:hover {
+  background: var(--ink-100);
+  color: var(--text);
+}
+
+.source-collapse-btn .chev {
+  transition: transform 0.2s;
+}
+
+.source-config-body {
+  padding: 0 16px 14px;
+  border-top: 1px dashed var(--border);
+  margin-top: 0;
+  padding-top: 12px;
+}
+
+.source-warn-banner {
+  margin: 0 14px 12px;
 }
 
 .source-icon-lg {

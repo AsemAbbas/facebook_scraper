@@ -2,11 +2,12 @@
 // مَرصَد · Auth Module v4.2
 // =====================================================================
 
-const AUTH = {
+window.AUTH = window.AUTH || {
   user: null,
   hasUsers: false,
   dbOk: false,
 };
+const AUTH = window.AUTH;
 
 async function checkAuth() {
   try {

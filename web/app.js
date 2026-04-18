@@ -97,17 +97,30 @@ async function init() {
 // ========= User Menu =========
 
 function renderUserMenu() {
-  if (!window.AUTH || !AUTH.user) return;
-  const u = AUTH.user;
-  const avatar = (u.display_name || u.username || '؟').slice(0, 1);
+  const u = (window.AUTH && window.AUTH.user) ? window.AUTH.user : null;
+  if (!u) {
+    console.warn('[user menu] No AUTH.user available');
+    return;
+  }
+  const displayName = u.display_name || u.username || '؟';
+  const avatar = String(displayName).trim().slice(0, 1) || '؟';
+
   const avatarEl = document.getElementById('userAvatar');
   if (avatarEl) avatarEl.textContent = avatar;
+
   const nameEl = document.getElementById('userNameLabel');
-  if (nameEl) nameEl.textContent = u.display_name || u.username;
+  if (nameEl) nameEl.textContent = displayName;
+
+  const usernameEl = document.getElementById('userUsernameLabel');
+  if (usernameEl) usernameEl.textContent = '@' + u.username;
+
   const roleEl = document.getElementById('userRoleLabel');
-  if (roleEl) roleEl.textContent = u.role === 'admin' ? '👑 مشرف' : 'مستخدم';
+  if (roleEl) roleEl.textContent = u.role === 'admin' ? '👑 مشرف' : '👤 مستخدم';
+
   if (u.role === 'admin') {
     document.querySelectorAll('.admin-only').forEach(el => el.hidden = false);
+  } else {
+    document.querySelectorAll('.admin-only').forEach(el => el.hidden = true);
   }
 }
 
@@ -2463,42 +2476,59 @@ async function openSettingsModal() {
 }
 
 function renderSourcesSettings(sources) {
+  const sorted = [...sources].sort((a, b) => (a.priority || 99) - (b.priority || 99));
   return `
     <div class="sources-settings">
       <p class="settings-intro">
-        فعّل مصدراً واحداً على الأقل لسحب المنشورات. الموصى به لـ cPanel: <strong>Apify</strong> أو <strong>FetchRSS</strong>.
+        فعّل مصدراً واحداً على الأقل لسحب المنشورات.
+        <br><strong>💡 نصيحة:</strong> اسحب البطاقات لإعادة ترتيب الأولوية. الأولى في القائمة = الأعلى أولوية.
       </p>
-      ${sources.map(s => renderSourceCard(s)).join('')}
+      <div class="sources-list" id="sourcesList">
+        ${sorted.map((s, idx) => renderSourceCard(s, idx + 1)).join('')}
+      </div>
     </div>
   `;
 }
 
-function renderSourceCard(s) {
+function renderSourceCard(s, priorityIndex) {
   const cPanelOk = s.source_name !== 'playwright';
+  const prio = priorityIndex ?? s.priority;
   return `
-    <div class="source-config-card ${s.enabled ? 'enabled' : ''}" data-source="${s.source_name}">
-      <div class="source-config-head">
+    <div class="source-config-card ${s.enabled ? 'enabled' : 'disabled'}" data-source="${s.source_name}" draggable="true">
+      <div class="source-config-head" role="button" tabindex="0">
+        <div class="source-drag-handle" title="اسحب لإعادة الترتيب">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/>
+            <circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/>
+          </svg>
+        </div>
+        <span class="source-priority-badge">${prio}</span>
         <div class="source-config-info">
           <span class="source-icon-lg">${s.icon}</span>
-          <div>
+          <div class="source-config-text">
             <strong>${s.label}</strong>
             <span class="source-price">${s.price}</span>
             <p class="source-desc">${s.description}</p>
           </div>
         </div>
-        <label class="switch">
+        <label class="switch" onclick="event.stopPropagation()">
           <input type="checkbox" class="source-toggle" ${s.enabled ? 'checked' : ''}>
           <span class="slider"></span>
         </label>
+        <button class="source-collapse-btn" type="button" aria-label="توسيع/طي التفاصيل">
+          <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
       </div>
 
       ${!cPanelOk ? `
-        <div class="alert alert-warn" style="margin-top:0.5rem">
+        <div class="alert alert-warn source-warn-banner">
           ⚠️ Playwright لا يعمل على cPanel (يحتاج Chromium). للإنتاج استخدم Apify أو FetchRSS.
         </div>
       ` : ''}
 
-      <div class="source-config-body" ${s.enabled ? '' : 'hidden'}>
+      <div class="source-config-body" hidden>
         ${s.needs_token ? `
           <div class="form-field">
             <label>${s.token_label}</label>
@@ -2518,60 +2548,57 @@ function renderSourceCard(s) {
             ${s.signup_url ? `<br><a href="${s.signup_url}" target="_blank" rel="noopener">➤ فتح ${s.label}</a>` : ''}
           </div>
         `}
-
-        <div class="form-field">
-          <label>الأولوية (الأقل = أولى)</label>
-          <input type="number" class="input source-priority" value="${s.priority}" min="1" max="99">
-        </div>
       </div>
     </div>
   `;
 }
 
 function bindSourceCards() {
-  document.querySelectorAll('.source-config-card').forEach(card => {
-    const sourceName = card.dataset.source;
+  const list = document.getElementById('sourcesList');
+  if (!list) return;
 
-    // Toggle enabled
-    const toggle = card.querySelector('.source-toggle');
-    if (toggle) {
-      toggle.addEventListener('change', async () => {
-        card.classList.toggle('enabled', toggle.checked);
-        const body = card.querySelector('.source-config-body');
-        if (body) body.hidden = !toggle.checked;
+  // === Toggle enabled (switch) ===
+  list.querySelectorAll('.source-toggle').forEach(toggle => {
+    toggle.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const card = toggle.closest('.source-config-card');
+      const sourceName = card.dataset.source;
+      card.classList.toggle('enabled', toggle.checked);
+      card.classList.toggle('disabled', !toggle.checked);
 
-        const res = await fetch(`/api/sources/${sourceName}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ enabled: toggle.checked }),
-        });
-        if (res.ok) {
-          showToast(toggle.checked ? `✅ ${sourceName} مفعّل` : `⊘ ${sourceName} معطّل`, 'success');
-        }
+      const res = await fetch(`/api/sources/${sourceName}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ enabled: toggle.checked }),
       });
-    }
+      if (res.ok) {
+        showToast(toggle.checked ? `✅ ${sourceName} مفعّل` : `⊘ ${sourceName} معطّل`, 'success');
+      }
+    });
+  });
 
-    // Save token
-    const saveBtn = card.querySelector('.source-save-token');
-    if (saveBtn) {
-      saveBtn.addEventListener('click', async () => {
-        const tokenInput = card.querySelector('.source-token-input');
-        const token = tokenInput.value.trim();
-        if (!token) {
-          showToast('الصق التوكن أولاً', 'error');
-          return;
-        }
-        saveBtn.disabled = true;
-        saveBtn.textContent = '⏳';
+  // === Save token ===
+  list.querySelectorAll('.source-save-token').forEach(saveBtn => {
+    saveBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const card = saveBtn.closest('.source-config-card');
+      const sourceName = card.dataset.source;
+      const tokenInput = card.querySelector('.source-token-input');
+      const token = tokenInput.value.trim();
+      if (!token) {
+        showToast('الصق التوكن أولاً', 'error');
+        return;
+      }
+      saveBtn.disabled = true;
+      saveBtn.textContent = '⏳';
+      try {
         const res = await fetch(`/api/sources/${sourceName}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({ token }),
         });
-        saveBtn.disabled = false;
-        saveBtn.textContent = 'حفظ';
         if (res.ok) {
           tokenInput.value = '';
           tokenInput.placeholder = '••••••••••• (محفوظ)';
@@ -2579,22 +2606,116 @@ function bindSourceCards() {
         } else {
           showToast('فشل الحفظ', 'error');
         }
-      });
-    }
-
-    // Priority change
-    const prioInput = card.querySelector('.source-priority');
-    if (prioInput) {
-      prioInput.addEventListener('change', async () => {
-        await fetch(`/api/sources/${sourceName}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ priority: parseInt(prioInput.value) }),
-        });
-      });
-    }
+      } catch (err) {
+        showToast('خطأ: ' + err.message, 'error');
+      }
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'حفظ';
+    });
   });
+
+  // === Collapse/Expand toggle ===
+  list.querySelectorAll('.source-config-card').forEach(card => {
+    const head = card.querySelector('.source-config-head');
+    const body = card.querySelector('.source-config-body');
+    const chev = card.querySelector('.chev');
+
+    const toggleCollapse = (e) => {
+      // Don't toggle if user clicked the switch or drag handle
+      if (e.target.closest('.switch') || e.target.closest('.source-drag-handle')) return;
+      const isOpen = !body.hidden;
+      body.hidden = isOpen;
+      card.classList.toggle('expanded', !isOpen);
+      if (chev) chev.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+    };
+
+    head.addEventListener('click', toggleCollapse);
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleCollapse(e);
+      }
+    });
+  });
+
+  // === Drag and drop reordering ===
+  let draggedEl = null;
+
+  list.querySelectorAll('.source-config-card').forEach(card => {
+    card.addEventListener('dragstart', (e) => {
+      draggedEl = card;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', card.dataset.source);
+    });
+
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      list.querySelectorAll('.source-config-card').forEach(c => c.classList.remove('drag-over'));
+      draggedEl = null;
+    });
+
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (draggedEl && card !== draggedEl) {
+        card.classList.add('drag-over');
+      }
+    });
+
+    card.addEventListener('dragleave', () => {
+      card.classList.remove('drag-over');
+    });
+
+    card.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      if (!draggedEl || draggedEl === card) return;
+
+      // Reorder in DOM
+      const rect = card.getBoundingClientRect();
+      const after = e.clientY > rect.top + rect.height / 2;
+      if (after) {
+        card.insertAdjacentElement('afterend', draggedEl);
+      } else {
+        card.insertAdjacentElement('beforebegin', draggedEl);
+      }
+
+      await saveSourcesPriority();
+    });
+  });
+}
+
+async function saveSourcesPriority() {
+  const list = document.getElementById('sourcesList');
+  if (!list) return;
+  const cards = Array.from(list.querySelectorAll('.source-config-card'));
+
+  // Update priority badges
+  cards.forEach((card, idx) => {
+    const badge = card.querySelector('.source-priority-badge');
+    if (badge) badge.textContent = idx + 1;
+  });
+
+  // Persist priorities (sequential, starting from 1)
+  const updates = cards.map((card, idx) => ({
+    name: card.dataset.source,
+    priority: idx + 1,
+  }));
+
+  try {
+    await Promise.all(updates.map(u =>
+      fetch(`/api/sources/${u.name}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ priority: u.priority }),
+      })
+    ));
+    showToast('✅ تم تحديث الأولوية', 'success');
+  } catch (e) {
+    showToast('فشل حفظ الترتيب', 'error');
+  }
 }
 
 function renderAccountSettings() {
