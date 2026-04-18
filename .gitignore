@@ -40,6 +40,15 @@ credentials.json
 *.pem
 
 # ====================================
+# Database (v4.0)
+# ====================================
+database/*.db
+database/.secret
+database/.app_secret
+*.sqlite
+*.sqlite3
+
+# ====================================
 # Marsad specific
 # ====================================
 # البيانات الخام للتطوير

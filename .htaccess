@@ -1,0 +1,55 @@
+# =====================================================================
+#  مَرصَد · .htaccess لـ cPanel + Phusion Passenger
+# =====================================================================
+# ملاحظة: cPanel "Setup Python App" بيضيف الـ PassengerAppRoot تلقائياً
+# لو احتجت تعديل يدوي، احذف التعليق عن السطور أدناه وعدّل المسار.
+
+# PassengerAppRoot "/home/USERNAME/public_html/marsad"
+# PassengerBaseURI "/"
+# PassengerPython "/home/USERNAME/virtualenv/marsad/3.11/bin/python3"
+
+# منع الوصول لملفات حساسة
+<Files .env>
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files *.db>
+    Order allow,deny
+    Deny from all
+</Files>
+
+<FilesMatch "\.(secret|key|pem)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+<Files passenger_wsgi.py>
+    Order allow,deny
+    Deny from all
+</Files>
+
+# منع الوصول لمجلد database
+RedirectMatch 404 "/database/"
+
+# Compression
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/json
+</IfModule>
+
+# Cache static assets
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 7 days"
+    ExpiresByType application/javascript "access plus 7 days"
+    ExpiresByType image/svg+xml "access plus 30 days"
+    ExpiresByType image/png "access plus 30 days"
+    ExpiresByType image/jpeg "access plus 30 days"
+</IfModule>
+
+# Security headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

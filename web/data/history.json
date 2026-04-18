@@ -1,0 +1,50 @@
+{
+  "runs": [
+    {
+      "run_id": "a254a3aab052",
+      "started_at": "2026-04-18T08:43:18.855857+00:00",
+      "finished_at": "2026-04-18T08:43:19.322661+00:00",
+      "duration_seconds": 0,
+      "status": "error",
+      "trigger": "manual",
+      "sources_used": [],
+      "pages_total": 1,
+      "pages_success": 0,
+      "pages_failed": 1,
+      "new_posts": 0,
+      "notes": ""
+    },
+    {
+      "run_id": "dbbbb0aefbc8",
+      "started_at": "2026-04-16T20:28:35.152750+00:00",
+      "finished_at": "2026-04-16T20:33:24.602093+00:00",
+      "duration_seconds": 289,
+      "status": "success",
+      "trigger": "manual",
+      "sources_used": [
+        "playwright"
+      ],
+      "pages_total": 1,
+      "pages_success": 1,
+      "pages_failed": 0,
+      "new_posts": 9,
+      "notes": ""
+    },
+    {
+      "run_id": "76c572ef3edd",
+      "started_at": "2026-04-16T20:21:03.314814+00:00",
+      "finished_at": "2026-04-16T20:25:07.338652+00:00",
+      "duration_seconds": 244,
+      "status": "success",
+      "trigger": "manual",
+      "sources_used": [
+        "playwright"
+      ],
+      "pages_total": 1,
+      "pages_success": 1,
+      "pages_failed": 0,
+      "new_posts": 10,
+      "notes": ""
+    }
+  ]
+}

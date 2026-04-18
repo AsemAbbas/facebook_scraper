@@ -1,122 +1,99 @@
 # 🔍 مَرصَد · Marsad
 
-> أداة احترافية لرصد منشورات صفحات فيسبوك العامة · واجهة عربية كاملة · 5 مصادر سحب قابلة للتبديل
+> منصة احترافية لرصد منشورات صفحات فيسبوك العامة · نظام حسابات · MySQL · متوافق مع cPanel
 
-![Version](https://img.shields.io/badge/version-3.0-orange)
+![Version](https://img.shields.io/badge/version-4.0-orange)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
+![Database](https://img.shields.io/badge/database-MySQL-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## ⚡ التشغيل السريع (دقيقة واحدة)
+## ✨ ما الجديد في v4.0
 
-### على ويندوز
+- 🔐 **نظام حسابات كامل** - تسجيل دخول + إدارة مستخدمين (admin + users)
+- 🗄️ **MySQL** - بدل JSON files، جاهز للاستضافة
+- 🌐 **متوافق cPanel** - passenger_wsgi.py + دليل نشر شامل
+- ⚙️ **كل الإعدادات من الواجهة** - لا حاجة لتعديل ملفات
+- 🗑️ **إدارة المنشورات** - حذف فردي / متعدد / كامل / تصدير+حذف (أرشفة)
+- 🎯 **ربط المصادر مبسّط** - فعّل/عطّل بكبسة، الصق token محفوظ مشفّراً
+- 🧩 **كل مستخدم بياناته** - صفحات، منشورات، إعدادات، tokens منفصلة
 
-1. **نزّل المشروع** (أو fork من GitHub)
-2. **انقر مرتين** على `start.bat`
-3. انتظر التثبيت التلقائي (أول مرة فقط ~2 دقيقة)
-4. المتصفح راح يفتح على `http://localhost:5050`
+---
 
-### على Mac / Linux
+## 🚀 طريقتين للتشغيل
 
+### 1️⃣ محلياً (للتطوير / الاستخدام الشخصي)
+
+**على ويندوز:**
+```
+نقر مزدوج على start.bat
+```
+
+**على Mac / Linux:**
 ```bash
-chmod +x start.sh
 ./start.sh
 ```
 
-**انتهيت!** راح يظهرلك الـ wizard ليرشدك للإعداد.
+المتصفح يفتح على `http://localhost:5050` → سجّل أول مستخدم = admin → ابدأ.
+
+### 2️⃣ على cPanel (للنشر الإنتاجي)
+
+راجع [CPANEL_DEPLOYMENT.md](CPANEL_DEPLOYMENT.md) - دليل 7 خطوات مفصّل (15-30 دقيقة).
 
 ---
 
-## ✨ المزايا
+## 🗄️ متطلبات قاعدة البيانات
 
-### 🎯 واجهة احترافية بالكامل
-- ✅ **سحب بكبسة واحدة** من داخل الواجهة
-- ✅ **progress live** أثناء السحب
-- ✅ **إدارة الصفحات** (إضافة / تعديل / حذف / اختبار)
-- ✅ **تحرير الإعدادات** مباشرة (config.yml) من الواجهة
-- ✅ **تفاصيل كاملة** لكل منشور (انقر المنشور)
-- ✅ **Analytics dashboard** (رسومات بيانية + إحصاءات)
-- ✅ **سجل كامل** لكل عمليات السحب
+**MySQL 5.7+ أو MariaDB 10+**
 
-### 🔌 5 مصادر مرنة (بدّل بكبسة)
-| المصدر | التكلفة | الموثوقية | التفاعلات |
-|--------|---------|-----------|-----------|
-| 🎭 **Playwright** | مجاني | متوسط | جزئي |
-| 🪶 **FetchRSS** | $9.95/شهر | عالي | ❌ |
-| ⚡ **RSS.app** | $16.64/شهر | عالي | ❌ |
-| 🏠 **RSSHub** | مجاني (VPS) | عالي | ❌ |
-| 💎 **Apify** | $49/شهر | عالي جداً | ✅ كاملة + تعليقات |
+أي cPanel يوفرها. محلياً استخدم Laragon / XAMPP / MySQL Community.
 
-### 🔍 بحث وفلترة متقدمة
-- فلتر بالصفحة، المصدر، التاريخ، الحد الأدنى للتفاعل
-- فلاتر سريعة: آخر 24س / 7 أيام / 30 يوم
-- بحث فوري في النصوص
-- تصدير CSV
+ملف `.env` (انسخ من `.env.example`):
+```env
+MARSAD_DB_HOST=localhost
+MARSAD_DB_PORT=3306
+MARSAD_DB_NAME=marsad
+MARSAD_DB_USER=root
+MARSAD_DB_PASSWORD=
+```
 
-### 🔔 اختياري
-- تنبيهات Telegram للمنشورات العالية
-- سحب تلقائي كل X ساعة
-- GitHub Actions (لو بدك تشغيل على cloud)
+الجداول تُنشأ تلقائياً في أول تشغيل.
 
 ---
 
-## 📋 كيف تستخدمه؟
+## 👥 نظام الحسابات
 
-### الخطوة 1: شغّل السيرفر
-انقر مرتين على `start.bat` (ويندوز) أو `./start.sh` (mac/linux).
-
-### الخطوة 2: أضف صفحة
-من الواجهة: اضغط زر **📄 إدارة الصفحات** → **+ إضافة صفحة**:
-- اسم الصفحة بالعربي (مثل: "قناة الجزيرة")
-- رابط الصفحة (`https://facebook.com/aljazeerachannel`)
-- 🧪 **اختبر** قبل الحفظ للتأكد من الرابط
-
-### الخطوة 3: ابدأ السحب
-اضغط **▶️ سحب الآن** → راح يظهرلك progress مباشر.
-
-### الخطوة 4: اكتشف المنشورات
-- انقر أي منشور لتفاصيله الكاملة (تعليقات، تفاعلات، صور، روابط)
-- فلتر، ابحث، رتّب، صدّر CSV
+- **أول مستخدم يسجّل = admin** تلقائياً
+- admin يرى كل المستخدمين في الإعدادات
+- كل مستخدم يرى بياناته فقط (صفحاته، منشوراته، token ه)
+- كلمات السر مشفّرة بـ PBKDF2-SHA256
+- API tokens مشفّرة بـ Fernet في DB
 
 ---
 
-## 🧙‍♂️ الإعدادات المتقدمة (اختياري)
+## 🔌 المصادر المدعومة
 
-كل شي من الواجهة عبر زر **⚙️ الإعدادات**:
-- **نظرة عامة:** روابط وإحصاءات
-- **config.yml:** محرر كامل بـ syntax highlighting
-- **pages.json:** عرض الصفحات المعرفة
-- **متقدّم:** أمثلة جاهزة لـ keywords, date ranges, Telegram
+| المصدر | التكلفة | يعمل cPanel؟ | التفاعلات |
+|--------|---------|--------------|-----------|
+| 💎 **Apify** | $49/شهر (5$ مجاني) | ✅ | ✅ كاملة + تعليقات |
+| 🪶 **FetchRSS** | $9.95/شهر | ✅ | ❌ |
+| ⚡ **RSS.app** | $16.64/شهر | ✅ | ❌ |
+| 🏠 **RSSHub** | مجاني (VPS) | ✅ | ❌ |
+| 🎭 **Playwright** | مجاني | ❌ | جزئي |
 
-### أمثلة (في config.yml مباشرة من الواجهة)
+> **لـ cPanel:** استخدم Apify أو FetchRSS. Playwright يحتاج Chromium وهو غير متاح على الاستضافة المشتركة.
 
-**تفعيل Apify (للحصول على تعليقات دقيقة):**
-```yaml
-sources:
-  - name: apify
-    enabled: true
-    token: ${APIFY_TOKEN}
-    include_comments: true
-    max_comments_per_post: 10
-```
+---
 
-**فلترة عند السحب:**
-```yaml
-scraping:
-  required_keywords: ["غزة", "القدس"]
-  excluded_keywords: ["إعلان"]
-  skip_sponsored: true
-```
+## 🎯 الاستخدام (من الواجهة بالكامل)
 
-**تنبيهات Telegram:**
-```yaml
-alerts:
-  telegram:
-    enabled: true
-    high_engagement_threshold: 5000
-    keywords: ["عاجل"]
-```
+1. **سجّل حساب** (أول مستخدم = admin)
+2. **الإعدادات** ⚙️ → فعّل مصدر (Apify / FetchRSS...) → الصق token
+3. **إدارة الصفحات** 📄 → أضف صفحة فيسبوك → اختبرها 🧪
+4. **سحب الآن** ▶️ → شاهد التقدم مباشرة
+5. **استكشف المنشورات** - فلتر، ابحث، انقر لتفاصيل التعليقات
+6. **إدارة** - احذف منشور/عدة/صفحة/كل شي - أو صدّر+احذف (أرشفة)
 
 ---
 
@@ -124,76 +101,103 @@ alerts:
 
 ```
 marsad/
-├── server.py              ← الخادم (Flask + API)
-├── start.bat / start.sh   ← مشغّل واحد فقط (double-click)
-├── config.yml             ← إعدادات المصادر + الفلاتر
-├── pages.json             ← قائمة الصفحات
-├── requirements.txt       ← Python dependencies
+├── server.py              ← Flask + API (16 endpoint)
+├── database.py            ← MySQL ORM layer
+├── auth.py                ← Flask-Login + user management
+├── passenger_wsgi.py      ← cPanel entry point
+├── .htaccess              ← cPanel / Apache config
+├── start.bat / start.sh   ← مشغّل محلي
+├── .env.example           ← قالب إعدادات DB
+├── requirements.txt       ← تبعيات Python
 │
 ├── web/                   ← الواجهة
-│   ├── index.html
-│   ├── app.js
-│   ├── style.css
-│   └── data/              ← البيانات المسحوبة (JSON)
+│   ├── index.html         ← auth screen + app
+│   ├── auth.js            ← تسجيل / دخول / خروج
+│   ├── app.js             ← التطبيق الرئيسي
+│   └── style.css
 │
-├── scrapers/              ← plugins المصادر (قابلة للتوسيع)
-│   ├── base.py            ← UnifiedPost schema
+├── scrapers/              ← 5 مصادر قابلة للتبديل
+│   ├── base.py
 │   ├── apify_source.py
 │   ├── fetchrss_source.py
 │   ├── rssapp_source.py
 │   ├── rsshub_source.py
 │   └── playwright_source.py
 │
-├── scripts/               ← scripts مساعدة
-│   ├── run.py             ← CLI scraper
-│   ├── local_run.py       ← سحب محلي + git push
-│   └── telegram_notify.py
+├── scripts/
+│   └── run.py / local_run.py
 │
-└── .github/workflows/     ← GitHub Actions (اختياري)
-    ├── scrape.yml
-    └── deploy.yml
+├── database/              ← (لا يُرفع - يحتوي secrets)
+│   ├── .secret            ← مفتاح Fernet لتشفير tokens
+│   └── .app_secret        ← Flask session key
+│
+├── CPANEL_DEPLOYMENT.md   ← دليل النشر
+├── TROUBLESHOOTING.md     ← حل المشاكل
+└── README.md
 ```
 
 ---
 
-## 🔗 API (للمطورين)
+## 🔗 REST API
 
-السيرفر يوفر REST API كامل على `http://localhost:5050/api`:
+كل endpoints تحت `/api/` تتطلب تسجيل دخول (cookie session).
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/status` | حالة النظام |
-| `GET` | `/api/pages` | قائمة الصفحات |
-| `POST` | `/api/pages` | حفظ الصفحات |
-| `DELETE` | `/api/pages/{slug}` | حذف صفحة |
-| `GET` | `/api/config` | إعدادات + raw YAML |
-| `POST` | `/api/config` | حفظ الإعدادات |
-| `POST` | `/api/config/raw` | حفظ من raw YAML |
-| `GET` | `/api/sources` | حالة المصادر |
-| `POST` | `/api/scrape` | بدء سحب |
-| `GET` | `/api/scrape` | Jobs نشطة |
-| `GET` | `/api/scrape/{id}` | حالة job |
-| `GET` | `/api/scrape/{id}/stream` | SSE progress |
-| `GET` | `/api/history` | سجل العمليات |
-| `POST` | `/api/test-page` | اختبار URL واحد |
+### Auth
+- `POST /api/auth/register` - تسجيل (أول = admin)
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+- `POST /api/auth/change-password`
+
+### Pages
+- `GET /api/pages` - صفحات المستخدم
+- `POST /api/pages` - حفظ
+- `DELETE /api/pages/:slug`
+
+### Posts
+- `GET /api/posts` - مع فلاتر (page, source, date, search, limit)
+- `DELETE /api/posts/:id` - حذف واحد
+- `POST /api/posts/bulk-delete` - حذف متعدد
+- `POST /api/posts/clear-page/:slug` - حذف كل منشورات صفحة
+- `POST /api/posts/clear-all` - حذف الكل
+- `GET /api/posts/export` - CSV
+- `POST /api/posts/export-and-delete` - أرشفة
+
+### Scraping
+- `POST /api/scrape` - بدء job
+- `GET /api/scrape/:id/stream` - SSE progress
+- `GET /api/history`
+
+### Settings
+- `GET /api/sources` - حالة + metadata
+- `PATCH /api/sources/:name` - فعّل / priority / token / config
+
+### Admin
+- `GET /api/admin/users`
+- `POST /api/admin/users`
+- `PATCH /api/admin/users/:id`
+- `DELETE /api/admin/users/:id`
+
+### System
+- `GET /api/status` - صحة النظام (public)
 
 ---
 
-## ⚠️ تحذيرات قانونية
+## 🔒 الأمان
 
-- 🚫 سحب فيسبوك يخالف شروط الخدمة
-- ✅ استخدم للأغراض البحثية/الصحفية فقط
-- 🚫 لا تسحب صفحات خاصة
-- ⏱️ احترم rate limits
-- 👤 لا تستخدم حسابك الشخصي للسحب
+- كلمات السر: PBKDF2-SHA256 · 100,000 iterations
+- API tokens: Fernet symmetric encryption
+- Session cookies: HttpOnly + SameSite=Lax
+- CORS مُفعّل مع credentials
+- `.htaccess` يمنع الوصول لـ `.env` و `database/`
 
 ---
 
-## 🛠️ استكشاف الأخطاء
+## ⚠️ تحذيرات
 
-راجع [TROUBLESHOOTING.md](TROUBLESHOOTING.md) للمشاكل الشائعة.
-
-**المشكلة الأكثر شيوعاً:** Playwright يفشل على GitHub Actions (IPs محجوبة). الحل: شغّل محلياً عبر `start.bat`.
+- 🚫 سحب فيسبوك يخالف شروط الخدمة - للأغراض البحثية فقط
+- 🚫 Playwright لا يعمل على cPanel (لا Chromium)
+- ✅ Apify / FetchRSS / RSS.app يعملون على كل استضافة
 
 ---
 
@@ -203,4 +207,4 @@ MIT · مفتوح المصدر بالكامل
 
 ---
 
-صُنع بـ ❤️ للصحافة والبحث الإعلامي · v3.0
+صُنع بـ ❤️ للصحافة والبحث الإعلامي · v4.0

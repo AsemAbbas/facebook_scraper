@@ -68,11 +68,13 @@ const els = {
 // ========= Init =========
 
 async function init() {
-  els.footerYear.textContent = new Date().getFullYear();
+  if (els.footerYear) els.footerYear.textContent = new Date().getFullYear();
 
-  // 1) Detect backend (server.py vs static)
-  await detectBackend();
-  showBackendStatus();
+  // v4.0: always backend mode
+  STATE.hasBackend = true;
+
+  // User menu
+  renderUserMenu();
 
   await loadIndex();
   await loadAllPages();
@@ -83,14 +85,197 @@ async function init() {
   setDefaultDateRange();
   restoreFilters();
   setupListeners();
+  setupPostManagement();
   applyFilters();
 
-  // Live runs (different sources based on backend)
   pollLiveRuns();
-  setInterval(pollLiveRuns, STATE.hasBackend ? 5000 : 30000);
+  setInterval(pollLiveRuns, 5000);
 
-  // First-run wizard
   maybeShowFirstRunWizard();
+}
+
+// ========= User Menu =========
+
+function renderUserMenu() {
+  if (!window.AUTH || !AUTH.user) return;
+  const u = AUTH.user;
+  const avatar = (u.display_name || u.username || '؟').slice(0, 1);
+  const avatarEl = document.getElementById('userAvatar');
+  if (avatarEl) avatarEl.textContent = avatar;
+  const nameEl = document.getElementById('userNameLabel');
+  if (nameEl) nameEl.textContent = u.display_name || u.username;
+  const roleEl = document.getElementById('userRoleLabel');
+  if (roleEl) roleEl.textContent = u.role === 'admin' ? '👑 مشرف' : 'مستخدم';
+  if (u.role === 'admin') {
+    document.querySelectorAll('.admin-only').forEach(el => el.hidden = false);
+  }
+}
+
+// ========= Post Management (Bulk Actions) =========
+
+function setupPostManagement() {
+  const selectAll = document.getElementById('selectAllCheckbox');
+  const bulkDelete = document.getElementById('bulkDeleteBtn');
+  const clearAll = document.getElementById('clearAllBtn');
+
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      const checked = selectAll.checked;
+      document.querySelectorAll('.post-select').forEach(cb => {
+        cb.checked = checked;
+      });
+      updateBulkButtonVisibility();
+    });
+  }
+
+  if (bulkDelete) {
+    bulkDelete.addEventListener('click', async () => {
+      const ids = Array.from(document.querySelectorAll('.post-select:checked'))
+        .map(cb => parseInt(cb.dataset.postId))
+        .filter(Boolean);
+      if (ids.length === 0) {
+        showToast('لا يوجد منشورات محددة', 'error');
+        return;
+      }
+      if (!confirm(`حذف ${ids.length} منشور نهائياً؟`)) return;
+
+      const res = await fetch('/api/posts/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ ids }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        showToast(`✅ تم حذف ${data.deleted} منشور`, 'success');
+        await loadAllPages();
+        applyFilters();
+      } else {
+        showToast('فشل الحذف', 'error');
+      }
+    });
+  }
+
+  if (clearAll) {
+    clearAll.addEventListener('click', () => {
+      openClearAllModal();
+    });
+  }
+}
+
+function updateBulkButtonVisibility() {
+  const count = document.querySelectorAll('.post-select:checked').length;
+  const btn = document.getElementById('bulkDeleteBtn');
+  if (btn) {
+    btn.hidden = count === 0;
+    btn.textContent = count ? `🗑️ حذف (${count})` : '🗑️ حذف المحدد';
+  }
+}
+
+function openClearAllModal() {
+  const pages = Object.values(STATE.pages);
+  openModal('🗑️ حذف المنشورات', `
+    <div class="clear-modal">
+      <div class="alert alert-warn">
+        ⚠️ <strong>تحذير:</strong> هذه العملية لا يمكن التراجع عنها.
+      </div>
+
+      <h3>اختر ما تريد حذفه:</h3>
+
+      <div class="clear-option">
+        <h4>📁 حذف منشورات صفحة محددة</h4>
+        <select id="clearPageSelect" class="select">
+          <option value="">— اختر صفحة —</option>
+          ${pages.map(p => `<option value="${escapeHtml(p.page_slug)}">${escapeHtml(p.page_name)} (${p.posts.length})</option>`).join('')}
+        </select>
+        <button class="btn-refresh btn-sm" id="clearPageBtn" type="button">حذف منشورات هذه الصفحة</button>
+      </div>
+
+      <div class="clear-option">
+        <h4>📤 تصدير + حذف (أرشفة)</h4>
+        <p class="small-note">ينزّل CSV أولاً ثم يحذف المنشورات.</p>
+        <select id="archivePageSelect" class="select">
+          <option value="">كل المنشورات</option>
+          ${pages.map(p => `<option value="${escapeHtml(p.page_slug)}">${escapeHtml(p.page_name)} (${p.posts.length})</option>`).join('')}
+        </select>
+        <button class="btn-trigger btn-sm" id="archiveBtn" type="button">📤 تصدير وحذف</button>
+      </div>
+
+      <div class="clear-option danger">
+        <h4>💣 حذف كل المنشورات</h4>
+        <p class="small-note">يحذف كل ${STATE.allPosts.length} منشور من كل الصفحات.</p>
+        <button class="btn-refresh btn-sm danger-btn" id="clearAllConfirmBtn" type="button">حذف كل المنشورات</button>
+      </div>
+    </div>
+  `);
+
+  document.getElementById('clearPageBtn').addEventListener('click', async () => {
+    const slug = document.getElementById('clearPageSelect').value;
+    if (!slug) {
+      showToast('اختر صفحة', 'error');
+      return;
+    }
+    if (!confirm(`حذف كل منشورات "${slug}" نهائياً؟`)) return;
+    const res = await fetch(`/api/posts/clear-page/${encodeURIComponent(slug)}`, {
+      method: 'POST', credentials: 'include',
+    });
+    if (res.ok) {
+      const d = await res.json();
+      showToast(`✅ تم حذف ${d.deleted} منشور`, 'success');
+      closeModal();
+      await loadAllPages();
+      applyFilters();
+    } else {
+      showToast('فشل الحذف', 'error');
+    }
+  });
+
+  document.getElementById('archiveBtn').addEventListener('click', async () => {
+    const slug = document.getElementById('archivePageSelect').value;
+    const target = slug ? `صفحة "${slug}"` : 'كل المنشورات';
+    if (!confirm(`تصدير CSV لـ ${target} ثم حذفها؟`)) return;
+
+    const res = await fetch('/api/posts/export-and-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(slug ? { page: slug } : {}),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      // download csv
+      const blob = new Blob([d.csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `marsad_archive_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast(`✅ صُدِّر ${d.count} منشور وحُذف ${d.deleted}`, 'success');
+      closeModal();
+      await loadAllPages();
+      applyFilters();
+    } else {
+      showToast('فشل', 'error');
+    }
+  });
+
+  document.getElementById('clearAllConfirmBtn').addEventListener('click', async () => {
+    if (!confirm(`تأكيد حذف كل ${STATE.allPosts.length} منشور نهائياً؟`)) return;
+    if (!confirm('هل أنت متأكد تماماً؟ لا يوجد تراجع!')) return;
+    const res = await fetch('/api/posts/clear-all', {
+      method: 'POST', credentials: 'include',
+    });
+    if (res.ok) {
+      const d = await res.json();
+      showToast(`✅ تم حذف ${d.deleted} منشور`, 'success');
+      closeModal();
+      await loadAllPages();
+      applyFilters();
+    } else {
+      showToast('فشل', 'error');
+    }
+  });
 }
 
 function showBackendStatus() {
@@ -137,46 +322,64 @@ function formatDateInput(d) {
 }
 
 async function loadIndex() {
+  // In v4.0 we rely on /api/posts + /api/pages + /api/history
+  // Keep STATE.index for backward compat
   try {
-    const res = await fetch('data/index.json?t=' + Date.now());
-    if (!res.ok) throw new Error('No index');
-    STATE.index = await res.json();
-    renderPageFilter();
-    updateLastUpdate(STATE.index.last_run);
-  } catch (e) {
-    STATE.index = { pages: [], last_run: null };
-    showEmpty('لا توجد بيانات بعد. افتح "دليل الإعداد" (ⓘ في الأعلى).');
-  }
+    // Last run from history
+    const res = await fetch('/api/history', { credentials: 'include' });
+    if (res.ok) {
+      const data = await res.json();
+      const runs = data.runs || [];
+      const lastRun = runs[0];
+      STATE.index = {
+        pages: [],
+        last_run: lastRun ? lastRun.finished_at || lastRun.started_at : null,
+        sources_used: lastRun ? lastRun.sources_used || [] : [],
+      };
+      updateLastUpdate(STATE.index.last_run);
+    }
+  } catch {}
 }
 
 async function loadAllPages() {
-  if (!STATE.index?.pages?.length) return;
-  const pages = STATE.index.pages.filter(p => p.status === 'success');
-
-  const results = await Promise.allSettled(
-    pages.map(async (p) => {
-      const res = await fetch(`data/${p.slug}.json?t=${Date.now()}`);
-      if (!res.ok) throw new Error(`Failed ${p.slug}`);
-      return res.json();
-    })
-  );
-
-  STATE.allPosts = [];
-  STATE.pages = {};
-  results.forEach((r) => {
-    if (r.status === 'fulfilled') {
-      const data = r.value;
-      STATE.pages[data.page_slug] = data;
-      data.posts.forEach(post => {
-        STATE.allPosts.push({
-          ...post,
-          page_slug: post.page_slug || data.page_slug,
-          page_name: post.page_name || data.page_name,
-        });
-      });
+  // v4.0: load from /api/posts (all user posts)
+  try {
+    const res = await fetch('/api/posts?limit=500', { credentials: 'include' });
+    if (!res.ok) {
+      STATE.allPosts = [];
+      return;
     }
-  });
-  updateStats();
+    const data = await res.json();
+    STATE.allPosts = data.posts || [];
+
+    // group by page_slug
+    STATE.pages = {};
+    STATE.allPosts.forEach(p => {
+      if (!STATE.pages[p.page_slug]) {
+        STATE.pages[p.page_slug] = {
+          page_slug: p.page_slug,
+          page_name: p.page_name,
+          posts: [],
+        };
+      }
+      STATE.pages[p.page_slug].posts.push(p);
+    });
+
+    // Build index.pages from loaded data
+    if (STATE.index) {
+      STATE.index.pages = Object.values(STATE.pages).map(pg => ({
+        slug: pg.page_slug,
+        name: pg.page_name,
+        status: 'success',
+      }));
+      renderPageFilter();
+    }
+
+    updateStats();
+  } catch (e) {
+    console.error('loadAllPages failed', e);
+    STATE.allPosts = [];
+  }
 }
 
 async function loadPagesConfig() {
@@ -503,7 +706,11 @@ function renderPosts() {
     const mediaCount = (post.media || []).length;
 
     return `
-      <article class="post-card clickable" data-post-id="${escapeHtml(post.post_id)}" data-post-slug="${escapeHtml(post.page_slug)}" style="animation-delay: ${Math.min(i * 30, 600)}ms">
+      <article class="post-card clickable" data-post-id="${escapeHtml(post.post_id)}" data-post-slug="${escapeHtml(post.page_slug)}" data-post-internal="${post.id || ''}" style="animation-delay: ${Math.min(i * 30, 600)}ms">
+        <div class="post-checkbox-wrap">
+          <input type="checkbox" class="post-select" data-post-id="${post.id || ''}">
+        </div>
+        <button class="btn-delete-post" title="حذف هذا المنشور" type="button">×</button>
         <div class="post-header">
           <div class="post-page">${typeIcon}${escapeHtml(post.page_name)}</div>
           <div class="post-time">${formatTime(post.timestamp_text, post.published_at || post.scraped_at)}</div>
@@ -534,15 +741,44 @@ function renderPosts() {
     `;
   }).join('');
 
-  // Click handlers على البطاقات
+  // Click handlers
   document.querySelectorAll('.post-card.clickable').forEach(card => {
     card.addEventListener('click', (e) => {
-      // ما تفتح لو ضغط على رابط فعلي داخل البطاقة
-      if (e.target.tagName === 'A') return;
+      if (e.target.closest('a, input, button')) return;
       const postId = card.dataset.postId;
       const slug = card.dataset.postSlug;
       const post = STATE.allPosts.find(p => p.post_id === postId && p.page_slug === slug);
       if (post) openPostDetailModal(post);
+    });
+  });
+
+  // Checkbox change
+  document.querySelectorAll('.post-select').forEach(cb => {
+    cb.addEventListener('change', updateBulkButtonVisibility);
+    cb.addEventListener('click', e => e.stopPropagation());
+  });
+
+  // Delete button
+  document.querySelectorAll('.btn-delete-post').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const card = btn.closest('.post-card');
+      const pid = card.dataset.postInternal;
+      if (!pid) return;
+      if (!confirm('حذف هذا المنشور؟')) return;
+      const res = await fetch(`/api/posts/${pid}`, {
+        method: 'DELETE', credentials: 'include',
+      });
+      if (res.ok) {
+        card.style.opacity = '0';
+        setTimeout(() => {
+          card.remove();
+          showToast('تم الحذف', 'success');
+          loadAllPages().then(applyFilters);
+        }, 200);
+      } else {
+        showToast('فشل الحذف', 'error');
+      }
     });
   });
 }
@@ -586,16 +822,14 @@ function showEmpty(msg) {
 function updateStats() {
   const totalReactions = STATE.allPosts.reduce((s, p) => s + (p.reactions || 0), 0);
   const totalComments  = STATE.allPosts.reduce((s, p) => s + (p.comments || 0), 0);
-  els.statPages.textContent = Object.keys(STATE.pages).length;
-  els.statPosts.textContent = formatNum(STATE.allPosts.length);
-  els.statReactions.textContent = formatNum(totalReactions);
-  els.statComments.textContent = formatNum(totalComments);
+  if (els.statPages) els.statPages.textContent = Object.keys(STATE.pages).length;
+  if (els.statPosts) els.statPosts.textContent = formatNum(STATE.allPosts.length);
+  if (els.statReactions) els.statReactions.textContent = formatNum(totalReactions);
+  if (els.statComments) els.statComments.textContent = formatNum(totalComments);
 
   const sources = STATE.index?.sources_used || [];
-  if (els.sourcesUsed && sources.length) {
-    els.sourcesUsed.textContent = `المصادر: ${sources.join(' · ')}`;
-  } else {
-    els.sourcesUsed.textContent = '';
+  if (els.sourcesUsed) {
+    els.sourcesUsed.textContent = sources.length ? `المصادر: ${sources.join(' · ')}` : '';
   }
 }
 
@@ -2413,7 +2647,279 @@ async function enableSourceInConfig(sourceName) {
   }
 }
 
-function openSettingsModal() {
+async function openSettingsModal() {
+  // Load latest sources status
+  await loadSourcesStatus();
+  const sources = STATE.sourcesStatus || [];
+
+  openModal('⚙️ الإعدادات', `
+    <div class="settings-modal">
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="sources">🔌 المصادر</button>
+        <button class="settings-tab" data-tab="account">👤 الحساب</button>
+        ${AUTH && AUTH.user && AUTH.user.role === 'admin' ? `
+          <button class="settings-tab" data-tab="users">👥 المستخدمون</button>
+        ` : ''}
+      </div>
+
+      <div id="settings-sources" class="settings-pane">
+        ${renderSourcesSettings(sources)}
+      </div>
+      <div id="settings-account" class="settings-pane" hidden>
+        ${renderAccountSettings()}
+      </div>
+      ${AUTH && AUTH.user && AUTH.user.role === 'admin' ? `
+        <div id="settings-users" class="settings-pane" hidden>
+          <div class="loading"><div class="spinner"></div></div>
+        </div>
+      ` : ''}
+    </div>
+  `, 'lg');
+
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.settings-pane').forEach(p => p.hidden = true);
+      document.getElementById(`settings-${tab.dataset.tab}`).hidden = false;
+      if (tab.dataset.tab === 'users') loadUsersTab();
+    });
+  });
+
+  bindSourceCards();
+  bindAccountSettings();
+}
+
+function renderSourcesSettings(sources) {
+  return `
+    <div class="sources-settings">
+      <p class="settings-intro">
+        فعّل مصدراً واحداً على الأقل لسحب المنشورات. الموصى به لـ cPanel: <strong>Apify</strong> أو <strong>FetchRSS</strong>.
+      </p>
+      ${sources.map(s => renderSourceCard(s)).join('')}
+    </div>
+  `;
+}
+
+function renderSourceCard(s) {
+  const cPanelOk = s.source_name !== 'playwright';
+  return `
+    <div class="source-config-card ${s.enabled ? 'enabled' : ''}" data-source="${s.source_name}">
+      <div class="source-config-head">
+        <div class="source-config-info">
+          <span class="source-icon-lg">${s.icon}</span>
+          <div>
+            <strong>${s.label}</strong>
+            <span class="source-price">${s.price}</span>
+            <p class="source-desc">${s.description}</p>
+          </div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" class="source-toggle" ${s.enabled ? 'checked' : ''}>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      ${!cPanelOk ? `
+        <div class="alert alert-warn" style="margin-top:0.5rem">
+          ⚠️ Playwright لا يعمل على cPanel (يحتاج Chromium). للإنتاج استخدم Apify أو FetchRSS.
+        </div>
+      ` : ''}
+
+      <div class="source-config-body" ${s.enabled ? '' : 'hidden'}>
+        ${s.needs_token ? `
+          <div class="form-field">
+            <label>${s.token_label}</label>
+            <div class="token-input-row">
+              <input type="password" class="input source-token-input" placeholder="${s.has_token ? '••••••••••• (محفوظ)' : 'الصق هنا'}" dir="ltr">
+              <button class="btn-trigger btn-sm source-save-token" type="button">حفظ</button>
+            </div>
+            <span class="field-help">${s.token_help}</span>
+            ${s.signup_url ? `<div class="source-help-links">
+              <a href="${s.signup_url}" target="_blank" rel="noopener">➤ إنشاء حساب</a>
+              ${s.token_url ? `<a href="${s.token_url}" target="_blank" rel="noopener">➤ الحصول على Token</a>` : ''}
+            </div>` : ''}
+          </div>
+        ` : `
+          <div class="info-box">
+            ℹ️ ${s.token_help}
+            ${s.signup_url ? `<br><a href="${s.signup_url}" target="_blank" rel="noopener">➤ فتح ${s.label}</a>` : ''}
+          </div>
+        `}
+
+        <div class="form-field">
+          <label>الأولوية (الأقل = أولى)</label>
+          <input type="number" class="input source-priority" value="${s.priority}" min="1" max="99">
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindSourceCards() {
+  document.querySelectorAll('.source-config-card').forEach(card => {
+    const sourceName = card.dataset.source;
+
+    // Toggle enabled
+    const toggle = card.querySelector('.source-toggle');
+    if (toggle) {
+      toggle.addEventListener('change', async () => {
+        card.classList.toggle('enabled', toggle.checked);
+        const body = card.querySelector('.source-config-body');
+        if (body) body.hidden = !toggle.checked;
+
+        const res = await fetch(`/api/sources/${sourceName}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ enabled: toggle.checked }),
+        });
+        if (res.ok) {
+          showToast(toggle.checked ? `✅ ${sourceName} مفعّل` : `⊘ ${sourceName} معطّل`, 'success');
+        }
+      });
+    }
+
+    // Save token
+    const saveBtn = card.querySelector('.source-save-token');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        const tokenInput = card.querySelector('.source-token-input');
+        const token = tokenInput.value.trim();
+        if (!token) {
+          showToast('الصق التوكن أولاً', 'error');
+          return;
+        }
+        saveBtn.disabled = true;
+        saveBtn.textContent = '⏳';
+        const res = await fetch(`/api/sources/${sourceName}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ token }),
+        });
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'حفظ';
+        if (res.ok) {
+          tokenInput.value = '';
+          tokenInput.placeholder = '••••••••••• (محفوظ)';
+          showToast('✅ تم حفظ التوكن', 'success');
+        } else {
+          showToast('فشل الحفظ', 'error');
+        }
+      });
+    }
+
+    // Priority change
+    const prioInput = card.querySelector('.source-priority');
+    if (prioInput) {
+      prioInput.addEventListener('change', async () => {
+        await fetch(`/api/sources/${sourceName}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ priority: parseInt(prioInput.value) }),
+        });
+      });
+    }
+  });
+}
+
+function renderAccountSettings() {
+  const u = AUTH ? AUTH.user : null;
+  if (!u) return '';
+  return `
+    <div class="account-settings">
+      <h3>المعلومات الشخصية</h3>
+      <div class="settings-table">
+        <table>
+          <tr><td>اسم المستخدم:</td><td><code>${escapeHtml(u.username)}</code></td></tr>
+          <tr><td>الاسم المعروض:</td><td>${escapeHtml(u.display_name)}</td></tr>
+          <tr><td>البريد:</td><td>${escapeHtml(u.email || '—')}</td></tr>
+          <tr><td>الدور:</td><td>${u.role === 'admin' ? '👑 مشرف' : 'مستخدم'}</td></tr>
+        </table>
+      </div>
+
+      <h3>تغيير كلمة السر</h3>
+      <form id="changePasswordForm" class="change-pass-form">
+        <div class="form-field">
+          <label>كلمة السر الحالية</label>
+          <input type="password" id="currentPass" class="input" required>
+        </div>
+        <div class="form-field">
+          <label>كلمة السر الجديدة (6+ أحرف)</label>
+          <input type="password" id="newPass" class="input" required minlength="6">
+        </div>
+        <button type="submit" class="btn-trigger btn-sm">تغيير</button>
+        <p class="auth-error" id="passError" hidden></p>
+      </form>
+    </div>
+  `;
+}
+
+function bindAccountSettings() {
+  const form = document.getElementById('changePasswordForm');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById('passError');
+      errEl.hidden = true;
+      const current = document.getElementById('currentPass').value;
+      const newPass = document.getElementById('newPass').value;
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ current_password: current, new_password: newPass }),
+      });
+      if (res.ok) {
+        showToast('✅ تم تغيير كلمة السر', 'success');
+        form.reset();
+      } else {
+        const d = await res.json();
+        errEl.textContent = d.error || 'فشل';
+        errEl.hidden = false;
+      }
+    });
+  }
+}
+
+async function loadUsersTab() {
+  const pane = document.getElementById('settings-users');
+  if (!pane || pane.dataset.loaded === '1') return;
+  try {
+    const res = await fetch('/api/admin/users', { credentials: 'include' });
+    if (!res.ok) {
+      pane.innerHTML = '<p class="note">فشل التحميل</p>';
+      return;
+    }
+    const data = await res.json();
+    pane.innerHTML = `
+      <div class="users-list">
+        <h3>إدارة المستخدمين (${data.users.length})</h3>
+        ${data.users.map(u => `
+          <div class="user-row">
+            <div class="user-row-info">
+              <strong>${escapeHtml(u.display_name || u.username)}</strong>
+              <span>@${escapeHtml(u.username)}</span>
+              <span class="user-role ${u.role === 'admin' ? 'admin' : ''}">${u.role === 'admin' ? '👑 admin' : 'user'}</span>
+            </div>
+            <div class="user-row-meta">
+              ${u.email ? `<span>${escapeHtml(u.email)}</span>` : ''}
+              <span>${u.last_login ? 'آخر دخول: ' + formatRelTime(u.last_login) : 'لم يدخل بعد'}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    pane.dataset.loaded = '1';
+  } catch (e) {
+    pane.innerHTML = `<p class="note">خطأ: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
+// Legacy openSettingsModal old code below (kept as fallback)
+function openSettingsModalLegacy() {
   const info = detectRepoInfo();
 
   openModal('⚙️ الإعدادات المتقدمة', `
@@ -2949,11 +3455,42 @@ function setupListeners() {
   });
 
   els.triggerBtn.addEventListener('click', openTriggerModal);
-  els.setupBtn.addEventListener('click', openSetupWizard);
+  if (els.setupBtn) els.setupBtn.addEventListener('click', openSetupWizard);
   els.managePagesBtn.addEventListener('click', openPagesModal);
   els.historyBtn.addEventListener('click', openHistoryModal);
   if (els.analyticsBtn) els.analyticsBtn.addEventListener('click', openAnalyticsModal);
   if (els.settingsBtn) els.settingsBtn.addEventListener('click', openSettingsModal);
+
+  // User menu
+  const userBtn = document.getElementById('userBtn');
+  const userDropdown = document.getElementById('userDropdown');
+  if (userBtn && userDropdown) {
+    userBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      userDropdown.hidden = !userDropdown.hidden;
+    });
+    document.addEventListener('click', () => {
+      userDropdown.hidden = true;
+    });
+  }
+  const menuLogout = document.getElementById('menuLogout');
+  if (menuLogout) {
+    menuLogout.addEventListener('click', () => {
+      if (confirm('تسجيل الخروج؟')) {
+        if (typeof logout === 'function') logout();
+      }
+    });
+  }
+  const menuChangePass = document.getElementById('menuChangePass');
+  if (menuChangePass) {
+    menuChangePass.addEventListener('click', () => {
+      openSettingsModal();
+      setTimeout(() => {
+        const accountTab = document.querySelector('[data-tab="account"]');
+        if (accountTab) accountTab.click();
+      }, 200);
+    });
+  }
 
   // Modal
   els.modalClose.addEventListener('click', closeModal);
@@ -2976,5 +3513,5 @@ function debounce(fn, ms) {
   };
 }
 
-// ========= Start =========
-init();
+// ========= NOTE: init() now called from auth.js after successful auth =========
+// init() auto-runs when auth.js finishes bootstrap.

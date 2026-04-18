@@ -1,15 +1,13 @@
 """
-مَرصَد · Backend Server
-=======================
-خادم Flask يقدم:
-  - الواجهة (web/)
-  - REST API لكل العمليات
-  - real-time progress عبر Server-Sent Events
-  - background scraping بدون توقف الواجهة
+مَرصَد · Backend Server v4.0
+=============================
+Flask + MySQL + Flask-Login · متوافق مع cPanel.
 
-تشغيل:
+تشغيل محلي:
     python server.py
-ثم افتح: http://localhost:5050
+
+تشغيل cPanel:
+    اتبع CPANEL_DEPLOYMENT.md
 """
 
 from __future__ import annotations
@@ -18,7 +16,6 @@ import asyncio
 import json
 import os
 import re
-import subprocess
 import sys
 import threading
 import time
@@ -26,24 +23,29 @@ import uuid
 import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
-    from flask import Flask, jsonify, request, send_from_directory, Response, stream_with_context
+    from flask import (Flask, jsonify, request, send_from_directory,
+                       Response, stream_with_context, make_response)
     from flask_cors import CORS
+    from flask_login import current_user, login_required
 except ImportError:
-    print("=" * 60)
-    print("  Flask not installed. Installing now...")
-    print("=" * 60)
+    import subprocess
+    print("Installing Flask dependencies...")
     subprocess.run([sys.executable, "-m", "pip", "install",
-                    "flask>=3.0.0", "flask-cors>=4.0.0"], check=True)
-    from flask import Flask, jsonify, request, send_from_directory, Response, stream_with_context
+                    "flask>=3.0.0", "flask-cors>=4.0.0", "flask-login>=0.6.3"],
+                   check=True)
+    from flask import (Flask, jsonify, request, send_from_directory,
+                       Response, stream_with_context, make_response)
     from flask_cors import CORS
+    from flask_login import current_user, login_required
 
-import yaml
+import database as db
+import auth as auth_module
 
 from scrapers.base import UnifiedPost
 from scrapers.apify_source import ApifySource
@@ -52,22 +54,31 @@ from scrapers.rssapp_source import RSSAppSource
 from scrapers.rsshub_source import RSSHubSource
 from scrapers.playwright_source import PlaywrightSource
 
-# ============================================================
-#  Globals
-# ============================================================
+
+# ======================================================================
+#  App init
+# ======================================================================
 
 app = Flask(__name__, static_folder=str(PROJECT_ROOT / "web"), static_url_path="")
-CORS(app)
+CORS(app, supports_credentials=True)
 
 WEB_DIR = PROJECT_ROOT / "web"
 DATA_DIR = WEB_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-CONFIG_PATH = PROJECT_ROOT / "config.yml"
-PAGES_PATH = PROJECT_ROOT / "pages.json"
-HISTORY_PATH = DATA_DIR / "history.json"
+# Bootstrap DB
+try:
+    db.bootstrap()
+    print("[db] schema initialized")
+except Exception as e:
+    print(f"[db] warning: could not init schema: {e}")
+    print("[db] make sure MySQL is running and credentials in .env are correct")
 
-# الـ SOURCE registry
+# Init auth
+auth_module.init_app(app)
+
+
+# Source metadata
 SOURCE_REGISTRY = {
     "apify": ApifySource,
     "fetchrss": FetchRSSSource,
@@ -76,232 +87,365 @@ SOURCE_REGISTRY = {
     "playwright": PlaywrightSource,
 }
 
-# Job tracking
-JOBS: dict[str, dict] = {}  # job_id -> {status, progress, messages, ...}
+SOURCE_META = {
+    "apify": {
+        "icon": "💎", "label": "Apify",
+        "description": "أعلى جودة - تفاعلات وتعليقات دقيقة",
+        "price": "$49/شهر (5$ مجاني)",
+        "needs_token": True,
+        "token_label": "Apify API Token",
+        "token_help": "من apify.com → Settings → Integrations → Personal API token",
+        "signup_url": "https://apify.com/sign-up",
+        "token_url": "https://console.apify.com/account/integrations",
+    },
+    "fetchrss": {
+        "icon": "🪶", "label": "FetchRSS",
+        "description": "الأرخص - يحتاج إنشاء RSS لكل صفحة",
+        "price": "$9.95/شهر",
+        "needs_token": False,
+        "token_label": "غير مطلوب (ضع RSS URL في كل صفحة)",
+        "token_help": "أنشئ feed في fetchrss.com ثم ضع رابط الـ RSS في حقل URL للصفحة",
+        "signup_url": "https://fetchrss.com",
+        "token_url": "https://fetchrss.com/dashboard",
+    },
+    "rssapp": {
+        "icon": "⚡", "label": "RSS.app",
+        "description": "RSS متوسط - تحديث أسرع",
+        "price": "$16.64/شهر",
+        "needs_token": False,
+        "token_label": "غير مطلوب (ضع RSS URL في كل صفحة)",
+        "token_help": "أنشئ feed في rss.app ثم ضع رابط الـ RSS في حقل URL للصفحة",
+        "signup_url": "https://rss.app",
+        "token_url": "https://rss.app/dashboard",
+    },
+    "rsshub": {
+        "icon": "🏠", "label": "RSSHub",
+        "description": "مفتوح المصدر - مجاني (تحتاج VPS)",
+        "price": "مجاني / ~$4 على VPS",
+        "needs_token": False,
+        "token_label": "Base URL للـ RSSHub instance",
+        "token_help": "استخدم https://rsshub.app (عام) أو نصّب نسختك الخاصة",
+        "signup_url": "https://docs.rsshub.app",
+        "token_url": "https://docs.rsshub.app/install/",
+    },
+    "playwright": {
+        "icon": "🎭", "label": "Playwright",
+        "description": "متصفح محلي - مجاني (غير متاح على cPanel)",
+        "price": "مجاني",
+        "needs_token": False,
+        "token_label": "لا يتطلب (يستخدم Chromium محلياً)",
+        "token_help": "يعمل فقط على جهازك المحلي، ليس على cPanel. استخدم Apify/FetchRSS لـ cPanel.",
+        "signup_url": "",
+        "token_url": "",
+    },
+}
+
+
+# Job tracking (in-memory for real-time progress; DB for persistent history)
+JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 
 
-# ============================================================
-#  Helpers
-# ============================================================
+# ======================================================================
+#  API: System status
+# ======================================================================
 
-def load_config() -> dict:
-    """قراءة config.yml + استبدال ${VAR}"""
-    if not CONFIG_PATH.exists():
-        return {}
-    text = CONFIG_PATH.read_text(encoding="utf-8")
-
-    def replacer(m):
-        return os.environ.get(m.group(1), "")
-
-    text = re.sub(r"\$\{([A-Z_][A-Z0-9_]*)\}", replacer, text)
-    return yaml.safe_load(text) or {}
-
-
-def load_config_raw() -> dict:
-    """قراءة config.yml بدون استبدال (للعرض)"""
-    if not CONFIG_PATH.exists():
-        return {}
-    return yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-
-
-def save_config(config: dict) -> None:
-    """حفظ config.yml"""
-    text = yaml.dump(config, allow_unicode=True, sort_keys=False, default_flow_style=False)
-    CONFIG_PATH.write_text(text, encoding="utf-8")
-
-
-def load_pages() -> dict:
-    if not PAGES_PATH.exists():
-        return {"pages": []}
-    return json.loads(PAGES_PATH.read_text(encoding="utf-8"))
-
-
-def save_pages(data: dict) -> None:
-    # احذف _help قبل الحفظ
-    if "_help" in data:
-        help_data = data.pop("_help")
-    else:
-        help_data = None
-    out = {"pages": data.get("pages", [])}
-    if help_data:
-        out["_help"] = help_data
-    PAGES_PATH.write_text(
-        json.dumps(out, ensure_ascii=False, indent=2),
-        encoding="utf-8"
-    )
-
-
-def load_history() -> list[dict]:
-    if not HISTORY_PATH.exists():
-        return []
+@app.route("/api/status", methods=["GET"])
+def api_status():
+    """حالة النظام (public - بدون auth)"""
     try:
-        data = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
-        return data.get("runs", [])
-    except Exception:
-        return []
+        db_ok, db_msg = db.test_connection()
+    except Exception as e:
+        db_ok, db_msg = False, str(e)
+
+    info = {
+        "ok": True,
+        "version": "4.0.0",
+        "database": {"connected": db_ok, "message": db_msg},
+        "has_users": False,
+        "authenticated": False,
+    }
+    if db_ok:
+        try:
+            info["has_users"] = db.user_count() > 0
+        except Exception:
+            pass
+
+    if current_user.is_authenticated:
+        info["authenticated"] = True
+        info["user"] = current_user.to_dict()
+        try:
+            info["pages_count"] = len(db.list_pages(current_user.id))
+            info["posts_count"] = db.count_posts(current_user.id)
+        except Exception:
+            pass
+
+    return jsonify(info)
 
 
-def append_history(run: dict) -> None:
-    runs = load_history()
-    runs.insert(0, run)  # latest first
-    runs = runs[:50]  # keep last 50
-    HISTORY_PATH.write_text(
-        json.dumps({"runs": runs}, ensure_ascii=False, indent=2),
-        encoding="utf-8"
-    )
-
-
-def slugify(text: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_")
-    return s[:40] or f"page_{int(time.time())}"
-
-
-# ============================================================
-#  API: Pages
-# ============================================================
+# ======================================================================
+#  API: Pages (user-scoped)
+# ======================================================================
 
 @app.route("/api/pages", methods=["GET"])
+@login_required
 def api_pages_list():
-    return jsonify(load_pages())
+    pages = db.list_pages(current_user.id)
+    return jsonify({"pages": pages})
 
 
 @app.route("/api/pages", methods=["POST"])
+@login_required
 def api_pages_save():
     data = request.get_json(force=True)
     if not isinstance(data, dict) or "pages" not in data:
         return jsonify({"error": "Invalid data"}), 400
-    # Auto-slug pages
+    # Auto-slug
     for p in data["pages"]:
         if not p.get("slug"):
-            p["slug"] = slugify(p.get("name", ""))
-    save_pages(data)
+            p["slug"] = _slugify(p.get("name", ""))
+    db.upsert_pages(current_user.id, data["pages"])
     return jsonify({"ok": True, "count": len(data["pages"])})
 
 
 @app.route("/api/pages/<slug>", methods=["DELETE"])
+@login_required
 def api_pages_delete(slug):
-    pages_data = load_pages()
-    pages_data["pages"] = [p for p in pages_data["pages"] if p.get("slug") != slug]
-    save_pages(pages_data)
-    # delete data file too
-    data_file = DATA_DIR / f"{slug}.json"
-    if data_file.exists():
-        data_file.unlink()
+    db.delete_page(current_user.id, slug)
     return jsonify({"ok": True})
 
 
-# ============================================================
-#  API: Config
-# ============================================================
+def _slugify(text: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "_", (text or "").strip().lower()).strip("_")
+    return s[:40] or f"page_{int(time.time())}"
 
-@app.route("/api/config", methods=["GET"])
-def api_config_get():
-    """يرجع config.yml كـ object + raw YAML text"""
+
+# ======================================================================
+#  API: Posts (user-scoped) - with filtering + delete
+# ======================================================================
+
+@app.route("/api/posts", methods=["GET"])
+@login_required
+def api_posts_list():
+    args = request.args
+    posts = db.list_posts(
+        current_user.id,
+        page_slug=args.get("page") or None,
+        source=args.get("source") or None,
+        min_reactions=int(args.get("min_reactions", 0) or 0),
+        min_comments=int(args.get("min_comments", 0) or 0),
+        date_from=args.get("date_from") or None,
+        date_to=args.get("date_to") or None,
+        search=args.get("search") or None,
+        limit=min(1000, int(args.get("limit", 500) or 500)),
+        offset=int(args.get("offset", 0) or 0),
+        order_by=args.get("order_by", "newest"),
+    )
+    total = db.count_posts(current_user.id, page_slug=args.get("page") or None)
+    return jsonify({"posts": posts, "total": total})
+
+
+@app.route("/api/posts/<int:post_id>", methods=["DELETE"])
+@login_required
+def api_post_delete(post_id):
+    ok = db.delete_post(current_user.id, post_id)
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/posts/bulk-delete", methods=["POST"])
+@login_required
+def api_posts_bulk_delete():
+    data = request.get_json(force=True) or {}
+    ids = data.get("ids") or []
+    if not isinstance(ids, list):
+        return jsonify({"error": "ids must be array"}), 400
+    ids = [int(x) for x in ids if str(x).isdigit()]
+    n = db.delete_posts_bulk(current_user.id, ids)
+    return jsonify({"ok": True, "deleted": n})
+
+
+@app.route("/api/posts/clear-page/<slug>", methods=["POST"])
+@login_required
+def api_posts_clear_page(slug):
+    n = db.delete_posts_by_page(current_user.id, slug)
+    return jsonify({"ok": True, "deleted": n})
+
+
+@app.route("/api/posts/clear-all", methods=["POST"])
+@login_required
+def api_posts_clear_all():
+    n = db.delete_all_posts(current_user.id)
+    return jsonify({"ok": True, "deleted": n})
+
+
+@app.route("/api/posts/export", methods=["GET"])
+@login_required
+def api_posts_export():
+    """يرجع CSV كاملة (نفس الفلاتر مثل list)"""
+    args = request.args
+    posts = db.list_posts(
+        current_user.id,
+        page_slug=args.get("page") or None,
+        source=args.get("source") or None,
+        min_reactions=int(args.get("min_reactions", 0) or 0),
+        min_comments=int(args.get("min_comments", 0) or 0),
+        date_from=args.get("date_from") or None,
+        date_to=args.get("date_to") or None,
+        search=args.get("search") or None,
+        limit=100_000,
+        offset=0,
+        order_by=args.get("order_by", "newest"),
+    )
+    csv_rows = [["الصفحة", "النص", "التفاعلات", "التعليقات", "المشاركات", "التاريخ", "المصدر", "الرابط"]]
+    for p in posts:
+        csv_rows.append([
+            p.get("page_name", ""),
+            (p.get("text", "") or "").replace('"', '""'),
+            p.get("reactions", 0),
+            p.get("comments", 0),
+            p.get("shares", 0),
+            p.get("published_at") or p.get("scraped_at") or "",
+            p.get("source", ""),
+            p.get("post_url") or "",
+        ])
+    csv_text = "\ufeff" + "\n".join(
+        ",".join(f'"{c}"' for c in row) for row in csv_rows
+    )
+
+    resp = make_response(csv_text)
+    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+    resp.headers["Content-Disposition"] = (
+        f'attachment; filename="marsad_{datetime.now().strftime("%Y%m%d_%H%M")}.csv"'
+    )
+    return resp
+
+
+@app.route("/api/posts/export-and-delete", methods=["POST"])
+@login_required
+def api_posts_export_and_delete():
+    """يرجع CSV ويحذف بعدها (للأرشفة)"""
+    data = request.get_json(silent=True) or {}
+    page_slug = data.get("page") or None
+
+    posts = db.list_posts(
+        current_user.id,
+        page_slug=page_slug,
+        limit=100_000,
+    )
+
+    # Build CSV string
+    csv_rows = [["الصفحة", "النص", "التفاعلات", "التعليقات", "المشاركات", "التاريخ", "المصدر", "الرابط"]]
+    for p in posts:
+        csv_rows.append([
+            p.get("page_name", ""),
+            (p.get("text", "") or "").replace('"', '""'),
+            p.get("reactions", 0),
+            p.get("comments", 0),
+            p.get("shares", 0),
+            p.get("published_at") or p.get("scraped_at") or "",
+            p.get("source", ""),
+            p.get("post_url") or "",
+        ])
+    csv_text = "\ufeff" + "\n".join(
+        ",".join(f'"{c}"' for c in row) for row in csv_rows
+    )
+
+    # Delete after export
+    if page_slug:
+        n = db.delete_posts_by_page(current_user.id, page_slug)
+    else:
+        n = db.delete_all_posts(current_user.id)
+
     return jsonify({
-        "config": load_config_raw(),
-        "raw": CONFIG_PATH.read_text(encoding="utf-8") if CONFIG_PATH.exists() else "",
+        "ok": True,
+        "deleted": n,
+        "csv": csv_text,
+        "count": len(posts),
     })
 
 
-@app.route("/api/config", methods=["POST"])
-def api_config_save():
-    """يحفظ config.yml من object"""
-    data = request.get_json(force=True)
-    if not isinstance(data, dict):
-        return jsonify({"error": "Invalid"}), 400
-    save_config(data)
-    return jsonify({"ok": True})
+# ======================================================================
+#  API: Stats
+# ======================================================================
+
+@app.route("/api/stats", methods=["GET"])
+@login_required
+def api_stats():
+    return jsonify({
+        "totals": db.stats_totals(current_user.id),
+        "by_page": db.stats_by_page(current_user.id),
+        "by_source": db.stats_by_source(current_user.id),
+    })
 
 
-@app.route("/api/config/raw", methods=["POST"])
-def api_config_save_raw():
-    """يحفظ config.yml من raw text"""
-    data = request.get_json(force=True)
-    raw = data.get("raw", "")
-    try:
-        # validate
-        yaml.safe_load(raw)
-    except yaml.YAMLError as e:
-        return jsonify({"error": f"YAML غير صالح: {e}"}), 400
-    CONFIG_PATH.write_text(raw, encoding="utf-8")
-    return jsonify({"ok": True})
-
-
-# ============================================================
-#  API: Sources Status
-# ============================================================
+# ======================================================================
+#  API: Sources (user-scoped)
+# ======================================================================
 
 @app.route("/api/sources", methods=["GET"])
-def api_sources_status():
-    """يرجع حالة كل المصادر (مفعّل، token موجود، إلخ)"""
-    config = load_config()
-    sources_config = config.get("sources", [])
-    result = []
-    for sc in sources_config:
-        name = sc.get("name", "")
-        info = {
-            "name": name,
-            "enabled": sc.get("enabled", False),
-            "priority": sc.get("priority", 99),
-            "has_token": False,
-            "icon": {"apify": "💎", "fetchrss": "🪶", "rssapp": "⚡",
-                     "rsshub": "🏠", "playwright": "🎭"}.get(name, "🔌"),
-            "description": _source_description(name),
-            "price": _source_price(name),
-        }
-        # check token
-        for tok_field in ("token", "api_key", "access_key"):
-            v = sc.get(tok_field)
-            if v and not str(v).startswith("${"):
-                info["has_token"] = True
-                break
-        if name == "playwright":
-            info["has_token"] = True  # ما يحتاج token
-        if name == "rsshub" and sc.get("base_url"):
-            info["has_token"] = True
-        result.append(info)
-    return jsonify(result)
+@login_required
+def api_sources_list():
+    sources = db.list_sources(current_user.id)
+    # enrich with meta
+    for s in sources:
+        meta = SOURCE_META.get(s["source_name"], {})
+        s.update({
+            "icon": meta.get("icon", "🔌"),
+            "label": meta.get("label", s["source_name"]),
+            "description": meta.get("description", ""),
+            "price": meta.get("price", ""),
+            "needs_token": meta.get("needs_token", False),
+            "token_label": meta.get("token_label", ""),
+            "token_help": meta.get("token_help", ""),
+            "signup_url": meta.get("signup_url", ""),
+            "token_url": meta.get("token_url", ""),
+        })
+    return jsonify({"sources": sources})
 
 
-def _source_description(name: str) -> str:
-    return {
-        "apify": "أفضل جودة - تفاعلات وتعليقات دقيقة",
-        "fetchrss": "الأرخص - يحتاج إنشاء RSS feed لكل صفحة",
-        "rssapp": "RSS سريع - تحديث أعلى",
-        "rsshub": "مفتوح المصدر - مجاني عبر VPS",
-        "playwright": "متصفح محلي - مجاني لكن غير موثوق",
-    }.get(name, "")
+@app.route("/api/sources/<name>", methods=["PATCH"])
+@login_required
+def api_source_update(name):
+    if name not in SOURCE_REGISTRY:
+        return jsonify({"error": "مصدر غير معروف"}), 404
+    data = request.get_json(silent=True) or {}
+    updates = {}
+    if "enabled" in data:
+        updates["enabled"] = bool(data["enabled"])
+    if "priority" in data:
+        updates["priority"] = int(data["priority"])
+    if "token" in data:
+        updates["token"] = data["token"]
+    if "config" in data and isinstance(data["config"], dict):
+        updates["config"] = data["config"]
+
+    db.update_source(current_user.id, name, **updates)
+    return jsonify({"ok": True})
 
 
-def _source_price(name: str) -> str:
-    return {
-        "apify": "$49/شهر (5$ مجاني)",
-        "fetchrss": "$9.95/شهر",
-        "rssapp": "$16.64/شهر",
-        "rsshub": "مجاني",
-        "playwright": "مجاني",
-    }.get(name, "")
-
-
-# ============================================================
-#  API: Scrape Job
-# ============================================================
+# ======================================================================
+#  API: Scrape (user-scoped with real-time SSE)
+# ======================================================================
 
 @app.route("/api/scrape", methods=["POST"])
+@login_required
 def api_scrape_start():
-    """يبدأ سحب جديد في الخلفية"""
     data = request.get_json(silent=True) or {}
-    slug = data.get("slug")  # optional - specific page
-    source = data.get("source")  # optional - force source
-    date_from = data.get("date_from")
-    date_to = data.get("date_to")
+    job_uid = uuid.uuid4().hex[:12]
 
-    job_id = uuid.uuid4().hex[:12]
+    params = {
+        "slug": data.get("slug"),
+        "source": data.get("source"),
+        "date_from": data.get("date_from"),
+        "date_to": data.get("date_to"),
+        "trigger": "manual",
+    }
+
     with JOBS_LOCK:
-        JOBS[job_id] = {
-            "id": job_id,
-            "status": "queued",  # queued | running | success | error
+        JOBS[job_uid] = {
+            "id": job_uid,
+            "user_id": current_user.id,
+            "status": "queued",
             "started_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None,
             "progress": 0,
@@ -309,249 +453,234 @@ def api_scrape_start():
             "current_page": "",
             "messages": [],
             "result": None,
-            "params": {"slug": slug, "source": source,
-                       "date_from": date_from, "date_to": date_to},
+            "params": params,
         }
+    db.create_job(current_user.id, job_uid, params)
 
-    # spawn thread
     t = threading.Thread(
         target=_run_scrape_job,
-        args=(job_id, slug, source, date_from, date_to),
+        args=(current_user.id, job_uid, params),
         daemon=True,
     )
     t.start()
 
-    return jsonify({"job_id": job_id, "status": "queued"})
+    return jsonify({"job_id": job_uid, "status": "queued"})
 
 
-def _run_scrape_job(job_id: str, slug: Optional[str], source: Optional[str],
-                    date_from: Optional[str], date_to: Optional[str]):
-    """تشغيل job في thread منفصل"""
+def _run_scrape_job(user_id: int, job_uid: str, params: dict):
+    """تشغيل الـ scraping في thread منفصل"""
     def update(**kwargs):
         with JOBS_LOCK:
-            JOBS[job_id].update(kwargs)
+            if job_uid in JOBS:
+                JOBS[job_uid].update(kwargs)
 
     def push_msg(level: str, text: str):
         with JOBS_LOCK:
-            JOBS[job_id]["messages"].append({
-                "time": datetime.now(timezone.utc).isoformat(),
-                "level": level,
-                "text": text,
-            })
+            if job_uid in JOBS:
+                JOBS[job_uid]["messages"].append({
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "level": level,
+                    "text": text,
+                })
 
     update(status="running")
+    db.update_job(job_uid, status="running")
     push_msg("info", "🚀 بدء العملية…")
 
     try:
-        config = load_config()
-        pages_data = load_pages()
-        all_pages = [p for p in pages_data.get("pages", []) if p.get("enabled", True)]
+        pages_all = db.list_pages(user_id, only_enabled=True)
+        slug = params.get("slug")
+        force_src = params.get("source")
+        date_from = params.get("date_from")
+        date_to = params.get("date_to")
 
         if slug:
-            all_pages = [p for p in all_pages if p.get("slug") == slug]
-            if not all_pages:
-                push_msg("error", f"الصفحة {slug} غير موجودة")
-                update(status="error", finished_at=datetime.now(timezone.utc).isoformat())
-                return
+            pages_all = [p for p in pages_all if p["slug"] == slug]
+        if not pages_all:
+            push_msg("error", "لا توجد صفحات مفعّلة")
+            update(status="error",
+                   finished_at=datetime.now(timezone.utc).isoformat())
+            db.update_job(job_uid, status="error",
+                          finished_at=datetime.now(timezone.utc))
+            return
 
-        update(total=len(all_pages))
-        push_msg("info", f"📄 سحب {len(all_pages)} صفحة")
+        update(total=len(pages_all))
+        push_msg("info", f"📄 سحب {len(pages_all)} صفحة")
 
-        # Build sources
+        # Build sources - user-scoped
+        user_sources = db.list_sources(user_id)
         sources_instances = []
-        for sc in config.get("sources", []):
-            if not sc.get("enabled"):
+        for s in user_sources:
+            if not s["enabled"]:
                 continue
-            cls = SOURCE_REGISTRY.get(sc.get("name"))
-            if cls:
-                sources_instances.append(cls(sc))
+            cls = SOURCE_REGISTRY.get(s["source_name"])
+            if not cls:
+                continue
+            # reconstruct config dict
+            full_conf = dict(s.get("config") or {})
+            full_conf["name"] = s["source_name"]
+            full_conf["enabled"] = s["enabled"]
+            full_conf["priority"] = s["priority"]
+            # token
+            secrets_ = db.get_source_with_token(user_id, s["source_name"])
+            tok = (secrets_ or {}).get("token", "")
+            if s["source_name"] == "apify":
+                full_conf["token"] = tok
+            elif s["source_name"] in ("fetchrss",):
+                full_conf["api_key"] = tok
+            elif s["source_name"] == "rssapp":
+                full_conf["api_key"] = tok
+            elif s["source_name"] == "rsshub":
+                full_conf["base_url"] = full_conf.get("base_url") or (tok or "https://rsshub.app")
+            sources_instances.append(cls(full_conf))
+
         sources_instances.sort(key=lambda s: s.priority)
 
-        if source:
-            sources_instances = [s for s in sources_instances if s.source_name == source]
+        if force_src:
+            sources_instances = [s for s in sources_instances if s.source_name == force_src]
 
         if not sources_instances:
-            push_msg("error", "لا يوجد مصدر مفعّل")
-            update(status="error", finished_at=datetime.now(timezone.utc).isoformat())
+            push_msg("error", "لا يوجد مصدر مفعّل - افتح الإعدادات وفعّل مصدر")
+            update(status="error",
+                   finished_at=datetime.now(timezone.utc).isoformat())
+            db.update_job(job_uid, status="error",
+                          finished_at=datetime.now(timezone.utc))
             return
 
         push_msg("info", f"🔌 المصادر: {', '.join(s.source_name for s in sources_instances)}")
 
-        # Loop pages
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         total_new = 0
         success_count = 0
-        sources_used = set()
+        sources_used: set = set()
+        started = datetime.now(timezone.utc)
 
-        for idx, page in enumerate(all_pages):
+        for idx, page in enumerate(pages_all):
             update(progress=idx, current_page=page.get("name", ""))
-            push_msg("info", f"📌 [{idx + 1}/{len(all_pages)}] {page.get('name', '')}")
+            push_msg("info", f"📌 [{idx + 1}/{len(pages_all)}] {page.get('name', '')}")
 
-            page_date_from = page.get("date_from") or date_from
-            page_date_to = page.get("date_to") or date_to
+            page_df = page.get("date_from") or date_from
+            page_dt = page.get("date_to") or date_to
 
-            # try sources in order
-            page_done = False
+            done = False
             for src in sources_instances:
-                if page_done:
+                if done:
                     break
                 push_msg("info", f"  ⏳ محاولة {src.source_name}…")
                 try:
-                    posts = loop.run_until_complete(
+                    posts_result = loop.run_until_complete(
                         src.scrape_page(
                             page["url"], page["slug"], page["name"],
                             page.get("max_posts", 20),
-                            date_from=page_date_from,
-                            date_to=page_date_to,
+                            date_from=page_df, date_to=page_dt,
                         )
                     )
-                    if posts:
-                        # merge & save
-                        existing = []
-                        out_path = DATA_DIR / f"{page['slug']}.json"
-                        if out_path.exists():
-                            try:
-                                existing_data = json.loads(out_path.read_text(encoding="utf-8"))
-                                existing = existing_data.get("posts", [])
-                            except Exception:
-                                pass
-                        existing_ids = {p.get("post_id") for p in existing}
-                        truly_new = [p for p in posts if p.post_id not in existing_ids]
-                        merged = [p.to_dict() for p in truly_new] + [
-                            p for p in existing if p.get("post_id") not in {x.post_id for x in truly_new}
-                        ]
-                        keep = config.get("output", {}).get("keep_history", 200)
-                        merged = merged[:keep]
-
-                        out_path.write_text(json.dumps({
-                            "page_slug": page["slug"],
-                            "page_name": page["name"],
-                            "page_url": page["url"],
-                            "last_updated": datetime.now(timezone.utc).isoformat(),
-                            "total_posts": len(merged),
-                            "posts": merged,
-                        }, ensure_ascii=False, indent=2), encoding="utf-8")
-
+                    if posts_result:
+                        posts_dicts = [p.to_dict() for p in posts_result]
+                        new_n = db.insert_posts(user_id, page["slug"], posts_dicts)
                         push_msg("success",
-                                 f"  ✅ {src.source_name}: {len(posts)} منشور ({len(truly_new)} جديد)")
-                        total_new += len(truly_new)
+                                 f"  ✅ {src.source_name}: {len(posts_result)} سُحب ({new_n} جديد)")
+                        total_new += new_n
                         success_count += 1
                         sources_used.add(src.source_name)
-                        page_done = True
+                        done = True
                     else:
                         push_msg("warn", f"  ⚠️  {src.source_name} ما رجع منشورات")
                 except Exception as e:
-                    push_msg("error", f"  ❌ {src.source_name}: {str(e)[:100]}")
+                    push_msg("error", f"  ❌ {src.source_name}: {str(e)[:120]}")
 
-            if not page_done:
+            if not done:
                 push_msg("error", f"  ⛔ كل المصادر فشلت لـ {page['name']}")
 
-        update(progress=len(all_pages))
+        update(progress=len(pages_all))
+        finished = datetime.now(timezone.utc)
+        duration = int((finished - started).total_seconds())
 
-        # Update index.json
-        index_data = {
-            "last_run": datetime.now(timezone.utc).isoformat(),
-            "sources_used": list(sources_used),
-            "total_new_posts": total_new,
-            "pages": [],
-        }
-        for page in all_pages:
-            out_path = DATA_DIR / f"{page['slug']}.json"
-            if out_path.exists():
-                try:
-                    pd = json.loads(out_path.read_text(encoding="utf-8"))
-                    index_data["pages"].append({
-                        "slug": page["slug"],
-                        "name": page["name"],
-                        "url": page["url"],
-                        "status": "success",
-                        "source_used": next(iter(sources_used), "unknown"),
-                        "total_posts": pd.get("total_posts", 0),
-                        "new_posts": 0,  # approx
-                        "last_updated": pd.get("last_updated"),
-                    })
-                except Exception:
-                    pass
-
-        (DATA_DIR / "index.json").write_text(
-            json.dumps(index_data, ensure_ascii=False, indent=2),
-            encoding="utf-8"
-        )
-
-        # save to history
-        finished = datetime.now(timezone.utc).isoformat()
-        with JOBS_LOCK:
-            started_at = JOBS[job_id]["started_at"]
-        duration = (datetime.fromisoformat(finished) - datetime.fromisoformat(started_at)).total_seconds()
-        append_history({
-            "run_id": job_id,
-            "started_at": started_at,
-            "finished_at": finished,
-            "duration_seconds": int(duration),
-            "status": "success" if success_count > 0 else "error",
-            "trigger": "manual",
-            "sources_used": list(sources_used),
-            "pages_total": len(all_pages),
-            "pages_success": success_count,
-            "pages_failed": len(all_pages) - success_count,
-            "new_posts": total_new,
-            "notes": "",
-        })
+        final_status = "success" if success_count > 0 else "error"
 
         update(
-            status="success" if success_count > 0 else "error",
-            finished_at=finished,
+            status=final_status,
+            finished_at=finished.isoformat(),
             result={
                 "success": success_count,
-                "failed": len(all_pages) - success_count,
+                "failed": len(pages_all) - success_count,
                 "new_posts": total_new,
                 "sources_used": list(sources_used),
             },
         )
-        push_msg("success", f"🏁 انتهى. {total_new} منشور جديد · {success_count}/{len(all_pages)} صفحة")
+
+        # persist to DB
+        with JOBS_LOCK:
+            msgs = JOBS.get(job_uid, {}).get("messages", [])
+        db.update_job(
+            job_uid,
+            status=final_status,
+            finished_at=finished,
+            duration_seconds=duration,
+            sources_used=list(sources_used),
+            pages_total=len(pages_all),
+            pages_success=success_count,
+            pages_failed=len(pages_all) - success_count,
+            new_posts=total_new,
+            messages_json=json.dumps(msgs, ensure_ascii=False),
+        )
+
+        push_msg("success",
+                 f"🏁 انتهى. {total_new} منشور جديد · {success_count}/{len(pages_all)} صفحة")
+
     except Exception as e:
         push_msg("error", f"خطأ غير متوقع: {e}")
         update(status="error", finished_at=datetime.now(timezone.utc).isoformat())
-    finally:
-        try:
-            loop.close()
-        except Exception:
-            pass
+        db.update_job(job_uid, status="error",
+                      finished_at=datetime.now(timezone.utc))
 
 
 @app.route("/api/scrape/<job_id>", methods=["GET"])
+@login_required
 def api_scrape_status(job_id):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-    if not job:
-        return jsonify({"error": "Not found"}), 404
-    return jsonify(job)
+    if job and job.get("user_id") == current_user.id:
+        return jsonify(job)
+    # fallback to DB
+    j = db.get_job_by_uid(job_id)
+    if j and j.get("user_id") == current_user.id:
+        return jsonify(j)
+    return jsonify({"error": "Not found"}), 404
 
 
 @app.route("/api/scrape", methods=["GET"])
+@login_required
 def api_scrape_active():
-    """يرجع كل الـ jobs النشطة"""
     with JOBS_LOCK:
-        active = [j for j in JOBS.values() if j["status"] in ("queued", "running")]
-        recent = sorted(JOBS.values(), key=lambda j: j["started_at"], reverse=True)[:5]
-    return jsonify({"active": active, "recent": recent})
+        active = [
+            j for j in JOBS.values()
+            if j.get("user_id") == current_user.id
+            and j["status"] in ("queued", "running")
+        ]
+    return jsonify({"active": active})
 
 
 @app.route("/api/scrape/<job_id>/stream")
+@login_required
 def api_scrape_stream(job_id):
-    """Server-Sent Events لعرض التقدم real-time"""
+    uid = current_user.id
+
     def generate():
-        last_msg_count = 0
-        while True:
+        last = 0
+        for _ in range(2000):  # max ~30 min
             with JOBS_LOCK:
                 job = JOBS.get(job_id)
             if not job:
-                yield f"data: {json.dumps({'error': 'job not found'})}\n\n"
+                yield f"data: {json.dumps({'error': 'not found'})}\n\n"
                 return
-            # send only new messages
-            new_msgs = job["messages"][last_msg_count:]
+            if job.get("user_id") != uid:
+                yield f"data: {json.dumps({'error': 'forbidden'})}\n\n"
+                return
+            new_msgs = job["messages"][last:]
+            last = len(job["messages"])
             payload = {
                 "status": job["status"],
                 "progress": job["progress"],
@@ -561,7 +690,6 @@ def api_scrape_stream(job_id):
                 "result": job["result"],
             }
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            last_msg_count = len(job["messages"])
             if job["status"] in ("success", "error"):
                 break
             time.sleep(0.8)
@@ -572,41 +700,52 @@ def api_scrape_stream(job_id):
                              "X-Accel-Buffering": "no"})
 
 
-# ============================================================
+# ======================================================================
 #  API: History
-# ============================================================
+# ======================================================================
 
 @app.route("/api/history", methods=["GET"])
+@login_required
 def api_history():
-    return jsonify({"runs": load_history()})
+    runs = db.list_jobs(current_user.id, limit=50)
+    return jsonify({"runs": runs})
 
 
-# ============================================================
-#  API: Test page (sniff URL)
-# ============================================================
+# ======================================================================
+#  API: Test single URL
+# ======================================================================
 
 @app.route("/api/test-page", methods=["POST"])
+@login_required
 def api_test_page():
-    """يجرّب سحب 3 منشورات فقط من URL واحد للاختبار"""
     data = request.get_json(force=True)
-    url = data.get("url", "").strip()
+    url = (data.get("url") or "").strip()
     source_name = data.get("source", "playwright")
-
     if not url:
         return jsonify({"error": "URL مطلوب"}), 400
 
-    config = load_config()
-    src_config = next((s for s in config.get("sources", []) if s.get("name") == source_name), None)
-    if not src_config:
-        return jsonify({"error": f"المصدر {source_name} غير موجود في config.yml"}), 400
-    if not src_config.get("enabled"):
-        return jsonify({"error": f"المصدر {source_name} غير مفعّل"}), 400
+    sec = db.get_source_with_token(current_user.id, source_name)
+    if not sec:
+        return jsonify({"error": f"المصدر {source_name} غير معرّف"}), 400
+    if not sec["enabled"]:
+        return jsonify({"error": f"المصدر {source_name} معطّل. فعّله أولاً."}), 400
 
     cls = SOURCE_REGISTRY.get(source_name)
     if not cls:
         return jsonify({"error": "مصدر غير معروف"}), 400
 
-    src = cls(src_config)
+    conf = dict(sec.get("config") or {})
+    conf["name"] = source_name
+    conf["enabled"] = True
+    conf["priority"] = sec.get("priority", 99)
+    if source_name == "apify":
+        conf["token"] = sec.get("token", "")
+    elif source_name in ("fetchrss", "rssapp"):
+        conf["api_key"] = sec.get("token", "")
+    elif source_name == "rsshub":
+        conf["base_url"] = conf.get("base_url") or "https://rsshub.app"
+
+    src = cls(conf)
     loop = asyncio.new_event_loop()
     try:
         posts = loop.run_until_complete(
@@ -623,60 +762,36 @@ def api_test_page():
         loop.close()
 
 
-# ============================================================
-#  API: System status
-# ============================================================
+# ======================================================================
+#  API: User prefs
+# ======================================================================
 
-@app.route("/api/status", methods=["GET"])
-def api_status():
-    """صحة النظام"""
-    pages = load_pages().get("pages", [])
-    enabled_pages = [p for p in pages if p.get("enabled", True)]
-    config = load_config()
-    enabled_sources = [s for s in config.get("sources", []) if s.get("enabled")]
-
-    posts_count = 0
-    for f in DATA_DIR.glob("*.json"):
-        if f.name == "index.json" or f.name == "history.json":
-            continue
-        try:
-            d = json.loads(f.read_text(encoding="utf-8"))
-            posts_count += len(d.get("posts", []))
-        except Exception:
-            pass
-
-    with JOBS_LOCK:
-        active = [j for j in JOBS.values() if j["status"] in ("queued", "running")]
-
-    return jsonify({
-        "ok": True,
-        "version": "3.0.0",
-        "pages_count": len(pages),
-        "pages_enabled": len(enabled_pages),
-        "sources_enabled": len(enabled_sources),
-        "posts_count": posts_count,
-        "active_jobs": len(active),
-        "data_dir": str(DATA_DIR),
-    })
+@app.route("/api/prefs", methods=["GET"])
+@login_required
+def api_prefs_get():
+    return jsonify(db.get_prefs(current_user.id))
 
 
-# ============================================================
-#  Static / SPA fallback
-# ============================================================
+@app.route("/api/prefs", methods=["POST"])
+@login_required
+def api_prefs_save():
+    data = request.get_json(silent=True) or {}
+    db.save_prefs(current_user.id, data)
+    return jsonify({"ok": True})
 
-@app.route("/data/<path:filename>")
-def data_files(filename):
-    return send_from_directory(str(DATA_DIR), filename)
 
+# ======================================================================
+#  Static files
+# ======================================================================
 
 @app.route("/")
 def index():
     return send_from_directory(str(WEB_DIR), "index.html")
 
 
-# ============================================================
-#  Run
-# ============================================================
+# ======================================================================
+#  Main (for local dev)
+# ======================================================================
 
 def main():
     port = int(os.environ.get("PORT", 5050))
@@ -684,15 +799,20 @@ def main():
     no_browser = os.environ.get("NO_BROWSER") == "1"
 
     print()
-    print("=" * 60)
-    print("  🔍 مَرصَد · Local Server v3.0")
-    print("=" * 60)
+    print("=" * 62)
+    print("  🔍 مَرصَد · Server v4.0 (MySQL + Auth + cPanel-ready)")
+    print("=" * 62)
     print(f"  Server: http://{host}:{port}")
-    print(f"  Data:   {DATA_DIR}")
+    print(f"  DB:     {db.DB_CONFIG['host']}:{db.DB_CONFIG['port']}/{db.DB_CONFIG['database']}")
     print()
-    print("  افتح المتصفح وادخل: http://localhost:{}".format(port))
-    print("  اضغط Ctrl+C لإيقاف الخادم")
-    print("=" * 60)
+
+    ok, msg = db.test_connection()
+    if ok:
+        print(f"  ✅ DB: {msg}")
+    else:
+        print(f"  ⚠️  DB: {msg}")
+        print(f"  → ضع بيانات الاتصال في .env (انظر .env.example)")
+    print("=" * 62)
     print()
 
     if not no_browser:

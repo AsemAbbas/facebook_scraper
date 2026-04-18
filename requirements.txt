@@ -1,17 +1,26 @@
 # ====================================
 # مَرصَد · Multi-Source Facebook Monitor
+# v4.0 - cPanel-ready with MySQL + Auth
 # ====================================
 
-# Backend Server (v3.0)
+# Backend Server
 flask>=3.0.0           # web server + REST API
 flask-cors>=4.0.0      # CORS للـ API
+flask-login>=0.6.3     # session management
+
+# Database (cPanel-compatible)
+pymysql>=1.1.0         # pure-python MySQL driver (works on any cPanel)
+cryptography>=41.0.0   # لتشفير API tokens في DB
 
 # Core
 pyyaml>=6.0.1          # قراءة config.yml
 aiohttp>=3.9.0         # HTTP async requests (لكل الـ RSS sources و Apify)
+requests>=2.31.0       # sync requests للـ Telegram + health checks
 
-# Playwright (اختياري - فعّل لو تستخدم playwright source)
+# Playwright (اختياري - فقط للتشغيل المحلي، ليس cPanel)
+# ملاحظة: في cPanel استخدم Apify/FetchRSS/RSS.app بدل Playwright
 playwright>=1.40.0
 
 # Telegram (اختياري)
-# requests>=2.31.0     # aiohttp كافي
+# requests موجود فوق
+

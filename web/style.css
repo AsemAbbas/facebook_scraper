@@ -3692,3 +3692,644 @@ button:active {
   border-color: var(--accent);
   background: var(--accent-50);
 }
+
+/* ================================================================
+   v4.0: Auth Screen
+   ================================================================ */
+
+#authScreen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  background: linear-gradient(135deg, var(--ink-50) 0%, var(--accent-50) 100%);
+}
+
+.auth-container {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: var(--shadow-lg);
+}
+
+.auth-brand {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.auth-brand h1 {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 800;
+  margin-top: 0.75rem;
+  color: var(--text);
+}
+
+.auth-brand p {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.auth-logo {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 10px;
+  background: linear-gradient(135deg, var(--accent-600), var(--accent-500));
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-accent);
+}
+
+.auth-logo .dot {
+  width: 8px;
+  height: 8px;
+  background: white;
+  border-radius: 50%;
+}
+
+.auth-logo .dot:nth-child(2) { opacity: 0.65; }
+.auth-logo .dot:nth-child(3) { opacity: 0.35; }
+
+.auth-warning {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  border: 1px solid #fca5a5;
+}
+
+.auth-info-box {
+  background: linear-gradient(135deg, var(--accent-50), transparent);
+  color: var(--text);
+  padding: 0.875rem;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  border: 1px solid var(--accent-100);
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 1rem;
+  background: var(--ink-100);
+  padding: 4px;
+  border-radius: var(--radius);
+}
+
+.auth-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.auth-tab.active {
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow-xs);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.form-field label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.form-field .req {
+  color: var(--danger);
+}
+
+.field-help {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.checkbox-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.auth-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+  padding: 8px 12px;
+  background: #fee2e2;
+  border-radius: var(--radius-sm);
+  border: 1px solid #fca5a5;
+  font-weight: 600;
+}
+
+.auth-footer {
+  text-align: center;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* ================================================================
+   v4.0: User Menu (Header)
+   ================================================================ */
+
+.user-menu {
+  position: relative;
+}
+
+.btn-user {
+  background: var(--ink-100);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 5px 8px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.btn-user:hover {
+  background: var(--accent-50);
+  border-color: var(--accent-400);
+}
+
+.user-avatar {
+  width: 26px;
+  height: 26px;
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+
+.user-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  z-index: 1000;
+  animation: slideDownBanner 0.15s var(--ease);
+}
+
+.user-info {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.user-info strong {
+  display: block;
+  font-family: var(--font-display);
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.user-info span {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  text-align: right;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.dropdown-item:hover {
+  background: var(--ink-100);
+}
+
+.dropdown-item.danger {
+  color: var(--danger);
+}
+
+.dropdown-item.danger:hover {
+  background: #fee2e2;
+}
+
+.dropdown-sep {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+/* ================================================================
+   v4.0: Post Management (Bulk Actions + Checkboxes)
+   ================================================================ */
+
+.meta-right {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.btn-meta {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  box-shadow: var(--shadow-xs);
+}
+
+.btn-meta:hover {
+  border-color: var(--border-strong);
+  background: var(--ink-100);
+}
+
+.btn-meta.danger {
+  color: var(--danger);
+  border-color: #fca5a5;
+}
+
+.btn-meta.danger:hover {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}
+
+.btn-meta input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* Post card with checkbox + delete */
+.post-checkbox-wrap {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.post-card:hover .post-checkbox-wrap,
+.post-card:has(.post-select:checked) .post-checkbox-wrap {
+  opacity: 1;
+}
+
+.post-select {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  display: block;
+}
+
+.post-card:has(.post-select:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-50);
+}
+
+.btn-delete-post {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 1.3rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.15s;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+}
+
+.post-card:hover .btn-delete-post {
+  opacity: 1;
+}
+
+.btn-delete-post:hover {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}
+
+/* ================================================================
+   v4.0: Clear modal
+   ================================================================ */
+
+.clear-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.clear-option {
+  background: var(--ink-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clear-option.danger {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.clear-option h4 {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  margin: 0;
+  color: var(--text);
+}
+
+.danger-btn {
+  background: var(--danger) !important;
+  color: white !important;
+  border-color: var(--danger) !important;
+}
+
+/* ================================================================
+   v4.0: Source Config Cards (Settings)
+   ================================================================ */
+
+.settings-intro {
+  padding: 0.875rem;
+  background: var(--accent-50);
+  border: 1px solid var(--accent-100);
+  border-radius: var(--radius);
+  font-size: 0.88rem;
+  color: var(--text);
+  margin-bottom: 1rem;
+}
+
+.source-config-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  transition: all 0.2s;
+}
+
+.source-config-card.enabled {
+  border-color: var(--success);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.04), transparent);
+}
+
+.source-config-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.source-config-info {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.source-icon-lg {
+  font-size: 2rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.source-config-info strong {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--text);
+  display: block;
+  font-weight: 700;
+}
+
+.source-price {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+  direction: ltr;
+}
+
+.source-desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.source-config-body {
+  margin-top: 1rem;
+  padding-top: 0.875rem;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.token-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.token-input-row .input {
+  flex: 1;
+}
+
+.source-help-links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  margin-top: 4px;
+}
+
+.source-help-links a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.source-help-links a:hover {
+  text-decoration: underline;
+}
+
+.info-box {
+  background: var(--ink-50);
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.65;
+  border: 1px solid var(--border);
+}
+
+.info-box a {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* ================================================================
+   v4.0: Users list (admin)
+   ================================================================ */
+
+.users-list h3 {
+  font-family: var(--font-display);
+  margin-bottom: 0.75rem;
+}
+
+.user-row {
+  background: var(--ink-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.user-row-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.user-row-info strong {
+  font-family: var(--font-display);
+  color: var(--text);
+}
+
+.user-row-info span {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.user-role {
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--ink-100);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.user-role.admin {
+  background: #fef3c7;
+  color: #78350f;
+}
+
+.user-row-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Account settings */
+.account-settings .settings-table table {
+  width: 100%;
+  font-size: 0.88rem;
+  margin-bottom: 1.5rem;
+}
+
+.account-settings .settings-table td {
+  padding: 6px 10px;
+}
+
+.account-settings .settings-table td:first-child {
+  color: var(--text-muted);
+  font-weight: 600;
+  width: 40%;
+}
+
+.change-pass-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 400px;
+}
+
+/* ================================================================
+   v4.0: Simplified footer
+   ================================================================ */
+
+.footer-simple {
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+  padding: 1.25rem 1rem;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 2rem;
+}
+
+.footer-simple p {
+  margin: 0;
+  font-weight: 600;
+}
