@@ -4722,49 +4722,106 @@ button:active {
 }
 
 /* ================================================================
-   v4.0: Users list (admin)
+   v4.0+4.9: Users list (admin) - full CRUD UI
    ================================================================ */
 
 .users-list h3 {
   font-family: var(--font-display);
-  margin-bottom: 0.75rem;
+  margin-bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.users-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.users-header .count-badge {
+  background: var(--accent-100);
+  color: var(--accent-900);
+  font-size: 0.78rem;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  font-weight: 700;
+}
+
+.users-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .user-row {
-  background: var(--ink-50);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.75rem 1rem;
-  margin-bottom: 6px;
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
   gap: 10px;
+  align-items: center;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.user-row:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
 }
 
 .user-row-info {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
+}
+
+.user-avatar-sm {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-500), var(--accent-700));
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px -1px rgba(249,115,22,0.35);
 }
 
 .user-row-info strong {
   font-family: var(--font-display);
   color: var(--text);
+  font-size: 1rem;
+  display: block;
 }
 
-.user-row-info span {
-  font-size: 0.82rem;
+.user-sub {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.user-sub span {
+  font-size: 0.78rem;
   color: var(--text-muted);
 }
 
 .user-role {
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: var(--radius-full);
   background: var(--ink-100);
+  color: var(--text-secondary);
   font-size: 0.72rem;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .user-role.admin {
@@ -4772,12 +4829,92 @@ button:active {
   color: #78350f;
 }
 
+.user-role.disabled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.user-role.self {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
 .user-row-meta {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  font-size: 0.78rem;
+  align-items: flex-start;
+  font-size: 0.76rem;
   color: var(--text-muted);
+  grid-column: 1;
+}
+
+.user-row-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.user-row-actions .btn-refresh {
+  padding: 6px 10px;
+  font-size: 0.76rem;
+}
+
+.btn-danger {
+  color: #991b1b !important;
+  border-color: #fca5a5 !important;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #fef2f2 !important;
+  border-color: #ef4444 !important;
+}
+
+/* Add-user form */
+.user-add-form {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.user-add-form h4 {
+  margin: 0 0 1rem;
+  font-family: var(--font-display);
+  color: var(--text);
+}
+
+.user-add-form .form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.user-add-form .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .user-row {
+    grid-template-columns: 1fr;
+  }
+  .user-row-actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+  .user-row-meta {
+    order: 3;
+  }
 }
 
 /* Account settings */

@@ -196,10 +196,17 @@ class BaseScraper(ABC):
         """
         إنشاء معرّف فريد للمنشور.
         يستخدم الـ raw_id إن وُجد، وإلا يعمل hash من النص.
+        ملاحظة: يستخدم hashlib.sha1 ليكون deterministic بين التشغيلات
+        (Python's built-in hash() يستخدم PYTHONHASHSEED عشوائي)،
+        وهذا ضروري لمنع تكرار المنشور نفسه عبر runs متتالية.
         """
         if raw_id:
             return str(raw_id)
-        return f"hash_{abs(hash(fallback_text[:100]))}"
+        import hashlib
+        norm = (fallback_text or "").strip()[:200]
+        if not norm:
+            return ""
+        return "hash_" + hashlib.sha1(norm.encode("utf-8")).hexdigest()[:20]
 
     @staticmethod
     def post_in_date_range(

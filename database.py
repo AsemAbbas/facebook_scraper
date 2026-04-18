@@ -574,13 +574,101 @@ def _parse_dt(value) -> Optional[datetime]:
     return None
 
 
+def _canonical_post_url(url: str) -> str:
+    """
+    تطبيع رابط المنشور لغرض كشف التكرار:
+    - يحذف query params (خاصة __cft__ و __tn__ الي بتتغير كل مرة)
+    - يوحّد المجال (www.facebook.com → facebook.com)
+    - يزيل trailing slashes
+    """
+    if not url:
+        return ""
+    u = str(url).strip()
+    if "?" in u:
+        u = u.split("?", 1)[0]
+    if "#" in u:
+        u = u.split("#", 1)[0]
+    u = u.replace("://www.facebook.com", "://facebook.com")
+    u = u.replace("://m.facebook.com", "://facebook.com")
+    u = u.replace("://mbasic.facebook.com", "://facebook.com")
+    u = u.rstrip("/")
+    return u.lower()
+
+
+def _content_fingerprint(page_slug: str, text: str, post_url: str) -> str:
+    """
+    بصمة محتوى المنشور لكشف التكرار عبر مصادر مختلفة.
+    نستخدم canonical URL إن وُجد، وإلا hash النص + page_slug.
+    """
+    canon_url = _canonical_post_url(post_url)
+    if canon_url:
+        return "u:" + hashlib.sha1(canon_url.encode("utf-8")).hexdigest()[:32]
+    norm_text = (text or "").strip()[:300]
+    if norm_text:
+        key = f"{page_slug}:{norm_text}"
+        return "t:" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:32]
+    return ""
+
+
 def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> int:
-    """يرجع عدد المنشورات الجديدة"""
+    """
+    يرجع عدد المنشورات الجديدة.
+    يمنع التكرار على 3 مستويات:
+      1. UNIQUE KEY على (user_id, page_slug, post_id) - دفاع أولي في DB
+      2. تطبيع post_url (إزالة query params المتغيّرة) وفحص مسبق
+      3. content fingerprint (URL مُطبَّع أو hash النص) - يكشف لما نفس
+         المنشور يجي من مصادر مختلفة بـ post_id مختلف
+    """
     if not posts:
         return 0
     new_count = 0
+    skipped_dup = 0
+
     with db_cursor() as cur:
+        # جمع كل الـ fingerprints الموجودة للصفحة دفعة وحدة (أسرع من فحص واحد واحد)
+        cur.execute("""
+            SELECT post_id, post_url, text
+            FROM posts
+            WHERE user_id = %s AND page_slug = %s
+        """, (user_id, page_slug))
+        existing_rows = cur.fetchall() or []
+        existing_post_ids: set[str] = set()
+        existing_fingerprints: set[str] = set()
+        for r in existing_rows:
+            pid = r.get("post_id") if isinstance(r, dict) else r[0]
+            purl = r.get("post_url") if isinstance(r, dict) else r[1]
+            ptxt = r.get("text") if isinstance(r, dict) else r[2]
+            if pid:
+                existing_post_ids.add(str(pid))
+            fp = _content_fingerprint(page_slug, ptxt or "", purl or "")
+            if fp:
+                existing_fingerprints.add(fp)
+
+        # معرّفات الجلسة الحالية لمنع التكرار داخل نفس الـ batch
+        seen_ids_batch: set[str] = set()
+        seen_fps_batch: set[str] = set()
+
         for p in posts:
+            pid = (p.get("post_id") or "")[:200]
+            purl = p.get("post_url") or ""
+            ptxt = p.get("text") or ""
+
+            # 1. تكرار بالـ post_id (موجود في DB أو في نفس الـ batch)
+            if pid and (pid in existing_post_ids or pid in seen_ids_batch):
+                skipped_dup += 1
+                continue
+
+            # 2. تكرار بالـ fingerprint
+            fp = _content_fingerprint(page_slug, ptxt, purl)
+            if fp and (fp in existing_fingerprints or fp in seen_fps_batch):
+                skipped_dup += 1
+                continue
+
+            # 3. لا بصمة ولا معرّف → منشور فارغ، نتجاهله
+            if not pid and not fp:
+                skipped_dup += 1
+                continue
+
             try:
                 cur.execute("""
                     INSERT IGNORE INTO posts
@@ -589,9 +677,9 @@ def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> int:
                      timestamp_text, reactions, comments, shares, source, post_type, raw_json)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
-                    user_id, page_slug, p.get("post_id", "")[:200],
+                    user_id, page_slug, pid,
                     p.get("page_name", ""), p.get("page_url", ""),
-                    p.get("text", ""), p.get("post_url", ""),
+                    ptxt, purl,
                     p.get("image_url", ""), p.get("video_url", ""),
                     _parse_dt(p.get("published_at")),
                     _parse_dt(p.get("scraped_at")) or datetime.now(timezone.utc),
@@ -604,6 +692,12 @@ def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> int:
                 ))
                 if cur.rowcount > 0:
                     new_count += 1
+                    if pid:
+                        seen_ids_batch.add(pid)
+                        existing_post_ids.add(pid)
+                    if fp:
+                        seen_fps_batch.add(fp)
+                        existing_fingerprints.add(fp)
             except Exception:
                 continue
     return new_count
@@ -723,6 +817,65 @@ def delete_all_posts(user_id: int) -> int:
     with db_cursor() as cur:
         cur.execute("DELETE FROM posts WHERE user_id=%s", (user_id,))
         return cur.rowcount
+
+
+def deduplicate_existing_posts(user_id: int) -> dict:
+    """
+    يمسح المنشورات المكرّرة الموجودة بالفعل في DB.
+    يحتفظ بأقدم نسخة (أقل id) ويحذف الباقي.
+    يرجع {removed, remaining, by_url, by_text}
+    """
+    removed = 0
+    removed_by_url = 0
+    removed_by_text = 0
+    with db_cursor() as cur:
+        cur.execute("""
+            SELECT id, page_slug, post_url, text
+            FROM posts
+            WHERE user_id=%s
+            ORDER BY id ASC
+        """, (user_id,))
+        rows = cur.fetchall() or []
+        seen_fps: dict[str, int] = {}  # fingerprint → first id kept
+        to_delete: list[int] = []
+        for r in rows:
+            rid = r["id"] if isinstance(r, dict) else r[0]
+            slug = (r["page_slug"] if isinstance(r, dict) else r[1]) or ""
+            purl = (r["post_url"] if isinstance(r, dict) else r[2]) or ""
+            ptxt = (r["text"] if isinstance(r, dict) else r[3]) or ""
+            fp = _content_fingerprint(slug, ptxt, purl)
+            if not fp:
+                continue
+            if fp in seen_fps:
+                to_delete.append(rid)
+                if fp.startswith("u:"):
+                    removed_by_url += 1
+                else:
+                    removed_by_text += 1
+            else:
+                seen_fps[fp] = rid
+
+        # Batch delete in chunks of 500
+        BATCH = 500
+        for i in range(0, len(to_delete), BATCH):
+            chunk = to_delete[i:i + BATCH]
+            placeholders = ",".join(["%s"] * len(chunk))
+            cur.execute(
+                f"DELETE FROM posts WHERE user_id=%s AND id IN ({placeholders})",
+                (user_id, *chunk)
+            )
+            removed += cur.rowcount
+
+        cur.execute("SELECT COUNT(*) AS c FROM posts WHERE user_id=%s", (user_id,))
+        remaining_row = cur.fetchone()
+        remaining = remaining_row["c"] if isinstance(remaining_row, dict) else remaining_row[0]
+
+    return {
+        "removed": removed,
+        "remaining": remaining,
+        "by_url": removed_by_url,
+        "by_text": removed_by_text,
+    }
 
 
 def stats_by_page(user_id: int) -> list[dict]:

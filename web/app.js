@@ -214,6 +214,12 @@ function openClearAllModal() {
         <button class="btn-trigger btn-sm" id="archiveBtn" type="button">📤 تصدير وحذف</button>
       </div>
 
+      <div class="clear-option">
+        <h4>🧹 تنظيف المنشورات المكرّرة</h4>
+        <p class="small-note">يفحص كل المنشورات ويحذف النسخ المكرّرة (نفس الرابط أو نفس النص من نفس الصفحة). يحتفظ بالنسخة الأقدم.</p>
+        <button class="btn-trigger btn-sm" id="dedupeBtn" type="button">🧹 إزالة التكرار</button>
+      </div>
+
       <div class="clear-option danger">
         <h4>💣 حذف كل المنشورات</h4>
         <p class="small-note">يحذف كل ${STATE.allPosts.length} منشور من كل الصفحات.</p>
@@ -221,6 +227,31 @@ function openClearAllModal() {
       </div>
     </div>
   `);
+
+  document.getElementById('dedupeBtn').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    if (!confirm('تشغيل تنظيف المنشورات المكرّرة؟ (يحتفظ بالنسخة الأقدم من كل منشور)')) return;
+    btn.disabled = true;
+    const origText = btn.textContent;
+    btn.textContent = '⏳ جاري الفحص...';
+    try {
+      const r = await fetch('/api/posts/dedupe', { method: 'POST', credentials: 'include' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'فشل');
+      const detail = d.removed > 0
+        ? `✅ حُذف ${d.removed} منشور مكرّر (${d.by_url} برابط مطابق، ${d.by_text} بنص مطابق). المتبقي: ${d.remaining}`
+        : '✅ لا يوجد منشورات مكرّرة — كل المنشورات فريدة';
+      showToast(detail, 'success');
+      closeModal();
+      await loadAllPages();
+      applyFilters();
+    } catch (err) {
+      showToast('خطأ: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  });
 
   document.getElementById('clearPageBtn').addEventListener('click', async () => {
     const slug = document.getElementById('clearPageSelect').value;
@@ -3244,9 +3275,11 @@ function bindAccountSettings() {
   }
 }
 
-async function loadUsersTab() {
+async function loadUsersTab(forceReload = false) {
   const pane = document.getElementById('settings-users');
-  if (!pane || pane.dataset.loaded === '1') return;
+  if (!pane) return;
+  if (!forceReload && pane.dataset.loaded === '1') return;
+  pane.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
   try {
     const res = await fetch('/api/admin/users', { credentials: 'include' });
     if (!res.ok) {
@@ -3254,28 +3287,258 @@ async function loadUsersTab() {
       return;
     }
     const data = await res.json();
-    pane.innerHTML = `
-      <div class="users-list">
-        <h3>إدارة المستخدمين (${data.users.length})</h3>
-        ${data.users.map(u => `
-          <div class="user-row">
-            <div class="user-row-info">
-              <strong>${escapeHtml(u.display_name || u.username)}</strong>
-              <span>@${escapeHtml(u.username)}</span>
-              <span class="user-role ${u.role === 'admin' ? 'admin' : ''}">${u.role === 'admin' ? '👑 admin' : 'user'}</span>
-            </div>
-            <div class="user-row-meta">
-              ${u.email ? `<span>${escapeHtml(u.email)}</span>` : ''}
-              <span>${u.last_login ? 'آخر دخول: ' + formatRelTime(u.last_login) : 'لم يدخل بعد'}</span>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `;
+    const me = (window.AUTH && window.AUTH.user) ? window.AUTH.user : {};
+    pane.innerHTML = renderUsersTab(data.users || [], me);
     pane.dataset.loaded = '1';
+    bindUsersTab();
   } catch (e) {
     pane.innerHTML = `<p class="note">خطأ: ${escapeHtml(e.message)}</p>`;
   }
+}
+
+function renderUsersTab(users, me) {
+  return `
+    <div class="users-list">
+      <div class="users-header">
+        <h3>إدارة المستخدمين <span class="count-badge">${users.length}</span></h3>
+        <button class="btn-trigger btn-sm" id="btnAddUser" type="button">➕ مستخدم جديد</button>
+      </div>
+
+      <div id="addUserFormWrap" hidden>${renderAddUserForm()}</div>
+
+      <div class="users-table">
+        ${users.length === 0
+          ? '<p class="note">لا يوجد مستخدمون بعد.</p>'
+          : users.map(u => renderUserRow(u, me)).join('')
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderAddUserForm() {
+  return `
+    <form class="user-add-form card-soft" id="addUserForm">
+      <h4>➕ إضافة مستخدم جديد</h4>
+      <div class="form-grid">
+        <div class="form-field">
+          <label>اسم المستخدم *</label>
+          <input type="text" class="input" name="username" required minlength="3" maxlength="40" dir="ltr" placeholder="username">
+        </div>
+        <div class="form-field">
+          <label>كلمة السر *</label>
+          <input type="password" class="input" name="password" required minlength="6" dir="ltr" placeholder="••••••">
+        </div>
+        <div class="form-field">
+          <label>الاسم الظاهر</label>
+          <input type="text" class="input" name="display_name" maxlength="100" placeholder="اسم المستخدم الكامل">
+        </div>
+        <div class="form-field">
+          <label>البريد الإلكتروني</label>
+          <input type="email" class="input" name="email" dir="ltr" placeholder="user@example.com">
+        </div>
+        <div class="form-field">
+          <label>الدور</label>
+          <select class="select" name="role">
+            <option value="user">👤 مستخدم</option>
+            <option value="admin">👑 مشرف</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-refresh" id="cancelAddUser">إلغاء</button>
+        <button type="submit" class="btn-trigger">💾 إنشاء</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderUserRow(u, me) {
+  const isSelf = me && me.id === u.id;
+  const isAdmin = u.role === 'admin';
+  const active = u.is_active !== 0 && u.is_active !== false;
+  return `
+    <div class="user-row" data-uid="${u.id}">
+      <div class="user-row-info">
+        <div class="user-avatar-sm">${escapeHtml(String(u.display_name || u.username || '?').trim().slice(0,1))}</div>
+        <div>
+          <strong>${escapeHtml(u.display_name || u.username)}</strong>
+          <div class="user-sub">
+            <span>@${escapeHtml(u.username)}</span>
+            ${u.email ? `<span>· ${escapeHtml(u.email)}</span>` : ''}
+          </div>
+        </div>
+        <span class="user-role ${isAdmin ? 'admin' : ''}">${isAdmin ? '👑 مشرف' : 'مستخدم'}</span>
+        ${!active ? '<span class="user-role disabled">معطّل</span>' : ''}
+        ${isSelf ? '<span class="user-role self">أنت</span>' : ''}
+      </div>
+      <div class="user-row-meta">
+        <span>${u.last_login ? 'آخر دخول: ' + formatRelTime(u.last_login) : 'لم يدخل بعد'}</span>
+      </div>
+      <div class="user-row-actions">
+        <button class="btn-refresh btn-sm" data-action="edit" title="تعديل المستخدم">✏️ تعديل</button>
+        <button class="btn-refresh btn-sm" data-action="reset-pass" title="إعادة تعيين كلمة السر">🔐 كلمة سر</button>
+        <button class="btn-refresh btn-sm" data-action="toggle-role" title="${isAdmin ? 'إزالة صلاحية المشرف' : 'ترقية إلى مشرف'}" ${isSelf ? 'disabled' : ''}>${isAdmin ? '⬇️ إزالة إشراف' : '⬆️ ترقية'}</button>
+        <button class="btn-refresh btn-sm" data-action="toggle-active" title="${active ? 'تعطيل الحساب' : 'تفعيل الحساب'}" ${isSelf ? 'disabled' : ''}>${active ? '⏸️ تعطيل' : '▶️ تفعيل'}</button>
+        <button class="btn-refresh btn-sm btn-danger" data-action="delete" title="حذف المستخدم" ${isSelf ? 'disabled' : ''}>🗑️ حذف</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindUsersTab() {
+  // Add user toggle
+  const btnAdd = document.getElementById('btnAddUser');
+  const wrap = document.getElementById('addUserFormWrap');
+  if (btnAdd && wrap) {
+    btnAdd.addEventListener('click', () => {
+      wrap.hidden = !wrap.hidden;
+      if (!wrap.hidden) {
+        wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        const first = wrap.querySelector('input[name="username"]');
+        if (first) setTimeout(() => first.focus(), 100);
+      }
+    });
+  }
+
+  const cancelAdd = document.getElementById('cancelAddUser');
+  if (cancelAdd) cancelAdd.addEventListener('click', () => { wrap.hidden = true; });
+
+  // Add user form submit
+  const addForm = document.getElementById('addUserForm');
+  if (addForm) {
+    addForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(addForm);
+      const body = {
+        username: (fd.get('username') || '').toString().trim(),
+        password: (fd.get('password') || '').toString(),
+        display_name: (fd.get('display_name') || '').toString().trim() || null,
+        email: (fd.get('email') || '').toString().trim() || null,
+        role: (fd.get('role') || 'user').toString(),
+      };
+      const submitBtn = addForm.querySelector('button[type="submit"]');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'جاري الإنشاء...';
+      try {
+        const r = await fetch('/api/admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(body)
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          showToast(j.error || 'فشل الإنشاء', 'error');
+          return;
+        }
+        showToast('تم إنشاء المستخدم ✓', 'success');
+        await loadUsersTab(true);
+      } catch (err) {
+        showToast('خطأ: ' + err.message, 'error');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '💾 إنشاء';
+      }
+    });
+  }
+
+  // Row actions (event delegation)
+  const pane = document.getElementById('settings-users');
+  if (!pane) return;
+  pane.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const row = btn.closest('.user-row');
+    if (!row) return;
+    const uid = parseInt(row.dataset.uid, 10);
+    const action = btn.dataset.action;
+    const nameEl = row.querySelector('strong');
+    const uname = nameEl ? nameEl.textContent : `#${uid}`;
+
+    if (action === 'delete') {
+      if (!confirm(`حذف المستخدم "${uname}"؟ لا يمكن التراجع.`)) return;
+      await apiAdminUser('DELETE', uid);
+    }
+    else if (action === 'reset-pass') {
+      const pw = prompt(`كلمة سر جديدة للمستخدم "${uname}" (6 أحرف على الأقل):`);
+      if (!pw) return;
+      if (pw.length < 6) { showToast('كلمة السر قصيرة', 'error'); return; }
+      await apiAdminUser('PATCH', uid, { password: pw }, 'تم تحديث كلمة السر');
+    }
+    else if (action === 'toggle-role') {
+      const isAdminNow = row.querySelector('.user-role.admin');
+      const newRole = isAdminNow ? 'user' : 'admin';
+      const label = newRole === 'admin' ? 'ترقية إلى مشرف' : 'إزالة صلاحية المشرف';
+      if (!confirm(`${label} للمستخدم "${uname}"؟`)) return;
+      await apiAdminUser('PATCH', uid, { role: newRole }, 'تم تحديث الدور');
+    }
+    else if (action === 'toggle-active') {
+      const disabled = !!row.querySelector('.user-role.disabled');
+      await apiAdminUser('PATCH', uid, { is_active: disabled }, disabled ? 'تم تفعيل الحساب' : 'تم تعطيل الحساب');
+    }
+    else if (action === 'edit') {
+      openEditUserModal(uid, row);
+    }
+  });
+}
+
+async function apiAdminUser(method, uid, body = null, okMsg = 'تم') {
+  try {
+    const opts = { method, credentials: 'include' };
+    if (body) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(`/api/admin/users/${uid}`, opts);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      showToast(j.error || 'فشل التحديث', 'error');
+      return false;
+    }
+    showToast(okMsg, 'success');
+    await loadUsersTab(true);
+    return true;
+  } catch (e) {
+    showToast('خطأ: ' + e.message, 'error');
+    return false;
+  }
+}
+
+function openEditUserModal(uid, row) {
+  const name = row.querySelector('strong')?.textContent || '';
+  const subSpans = row.querySelectorAll('.user-sub span');
+  const username = (subSpans[0]?.textContent || '').replace(/^@/, '');
+  const email = (subSpans[1]?.textContent || '').replace(/^·\s*/, '');
+
+  openModal(`✏️ تعديل المستخدم @${username}`, `
+    <form id="editUserForm" class="user-add-form">
+      <div class="form-field">
+        <label>الاسم الظاهر</label>
+        <input type="text" class="input" name="display_name" value="${escapeHtml(name)}" maxlength="100">
+      </div>
+      <div class="form-field">
+        <label>البريد الإلكتروني</label>
+        <input type="email" class="input" name="email" value="${escapeHtml(email)}" dir="ltr">
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-refresh" id="cancelEditUser">إلغاء</button>
+        <button type="submit" class="btn-trigger">💾 حفظ</button>
+      </div>
+    </form>
+  `, 'sm');
+
+  document.getElementById('cancelEditUser')?.addEventListener('click', closeModal);
+  document.getElementById('editUserForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = {
+      display_name: (fd.get('display_name') || '').toString().trim(),
+      email: (fd.get('email') || '').toString().trim() || null,
+    };
+    const ok = await apiAdminUser('PATCH', uid, body, 'تم حفظ التعديلات ✓');
+    if (ok) closeModal();
+  });
 }
 
 // ========= Listeners =========
@@ -3345,6 +3608,16 @@ function setupListeners() {
       setTimeout(() => {
         const accountTab = document.querySelector('[data-tab="account"]');
         if (accountTab) accountTab.click();
+      }, 200);
+    });
+  }
+  const menuManageUsers = document.getElementById('menuManageUsers');
+  if (menuManageUsers) {
+    menuManageUsers.addEventListener('click', () => {
+      openSettingsModal();
+      setTimeout(() => {
+        const usersTab = document.querySelector('[data-tab="users"]');
+        if (usersTab) usersTab.click();
       }, 200);
     });
   }

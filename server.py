@@ -289,6 +289,14 @@ def api_posts_clear_all():
     return jsonify({"ok": True, "deleted": n})
 
 
+@app.route("/api/posts/dedupe", methods=["POST"])
+@login_required
+def api_posts_dedupe():
+    """تنظيف المنشورات المكرّرة الموجودة (يحتفظ بأقدم نسخة)"""
+    result = db.deduplicate_existing_posts(current_user.id)
+    return jsonify({"ok": True, **result})
+
+
 @app.route("/api/posts/export", methods=["GET"])
 @login_required
 def api_posts_export():
