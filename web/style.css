@@ -4333,3 +4333,144 @@ button:active {
   margin: 0;
   font-weight: 600;
 }
+
+/* ================================================================
+   v4.1: Responsive tweaks - mobile first improvements
+   ================================================================ */
+
+/* Tablet and below - hide icon button labels */
+@media (max-width: 900px) {
+  .btn-refresh span,
+  .btn-trigger span {
+    display: none;
+  }
+  .btn-refresh,
+  .btn-trigger {
+    padding: 8px 10px;
+  }
+}
+
+/* Mobile - compact header */
+@media (max-width: 768px) {
+  .header-inner {
+    padding: 0.75rem;
+    gap: 0.5rem;
+  }
+  .brand-text h1 {
+    font-size: 1.4rem;
+  }
+  .brand-text .tagline {
+    display: none;  /* يحرر مكان */
+  }
+  .logo-mark {
+    padding: 8px 6px;
+  }
+  .last-update {
+    font-size: 0.7rem;
+    padding: 4px 8px;
+  }
+  .last-update #lastUpdateText {
+    display: none;
+  }
+  .last-update::after {
+    content: '';
+  }
+  .header-actions {
+    gap: 4px;
+  }
+  .btn-icon {
+    width: 32px;
+    height: 32px;
+    padding: 6px;
+  }
+  .btn-user {
+    padding: 3px 6px;
+  }
+  .user-avatar {
+    width: 22px;
+    height: 22px;
+    font-size: 0.75rem;
+  }
+  .stats-bar {
+    padding: 1rem 0.75rem;
+    gap: 0.5rem;
+  }
+  .stat {
+    padding: 0.75rem 0.5rem;
+  }
+  .stat-num {
+    font-size: 1.3rem;
+  }
+  .stat-label {
+    font-size: 0.7rem;
+  }
+  .controls,
+  .controls.advanced-row {
+    padding: 0.75rem;
+  }
+  .results-meta {
+    padding: 0 0.75rem 0.75rem;
+  }
+  .results-meta .meta-right {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .posts-grid {
+    padding: 0 0.75rem 2rem;
+  }
+  .post-card {
+    padding: 1rem;
+  }
+  .modal {
+    padding: 1.25rem 1rem;
+    border-radius: var(--radius);
+    max-width: 100%;
+    max-height: 95vh;
+  }
+  .modal h2 {
+    font-size: 1.2rem;
+  }
+  .auth-container {
+    padding: 1.5rem 1.25rem;
+    margin: 0.5rem;
+  }
+  .source-config-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .source-config-head .switch {
+    align-self: flex-start;
+  }
+}
+
+/* Very small - single column everything */
+@media (max-width: 420px) {
+  .stats-bar {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .stat-num {
+    font-size: 1.15rem;
+  }
+  .controls,
+  .controls.advanced-row {
+    grid-template-columns: 1fr !important;
+  }
+  .posts-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .btn-meta {
+    padding: 5px 8px;
+    font-size: 0.72rem;
+  }
+  .filter-action-buttons {
+    flex-wrap: wrap;
+  }
+  .btn-quick-range {
+    flex: 1 1 45%;
+  }
+  .user-dropdown {
+    right: auto;
+    left: 0;
+    min-width: 180px;
+  }
+}
