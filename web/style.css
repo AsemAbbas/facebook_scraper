@@ -2905,48 +2905,64 @@ button:active {
 .settings-modal {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.5rem;
 }
 
 .settings-tabs {
   display: flex;
   gap: 4px;
   background: var(--ink-100);
-  padding: 4px;
-  border-radius: var(--radius);
+  padding: 5px;
+  border-radius: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
 .settings-tab {
   flex: 1;
   background: transparent;
   border: none;
-  padding: 8px 12px;
-  font-size: 0.82rem;
+  padding: 10px 14px;
+  font-size: 0.88rem;
   font-weight: 700;
-  border-radius: var(--radius-sm);
+  border-radius: 9px;
   cursor: pointer;
   font-family: inherit;
-  color: var(--text-secondary);
-  transition: all 0.15s;
+  color: var(--text-muted);
+  transition: all 0.2s var(--ease);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.settings-tab:hover:not(.active) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .settings-tab.active {
   background: var(--bg-elevated);
-  color: var(--text);
-  box-shadow: var(--shadow-xs);
+  color: var(--accent-700);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.08), 0 2px 6px -2px rgb(15 23 42 / 0.06);
 }
 
 .settings-pane {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.5rem;
+  padding-top: 0.25rem;
 }
 
 .settings-pane h3 {
   font-family: var(--font-display);
-  font-size: 0.95rem !important;
-  font-weight: 700;
+  font-size: 1rem !important;
+  font-weight: 800;
   color: var(--text);
+  margin-top: 0.25rem;
   margin: 0.5rem 0 0.375rem !important;
 }
 
@@ -4622,6 +4638,18 @@ button:active {
 }
 
 /* Account settings */
+.account-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.account-settings h3 {
+  margin: 0 0 0.75rem !important;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
 .account-settings .settings-table table {
   width: 100%;
   font-size: 0.88rem;
@@ -4638,11 +4666,67 @@ button:active {
   width: 40%;
 }
 
+.profile-form,
 .change-pass-form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  max-width: 400px;
+  gap: 1rem;
+  padding: 1.25rem;
+  background: var(--ink-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 100%;
+}
+
+.profile-form .form-field,
+.change-pass-form .form-field {
+  gap: 6px;
+}
+
+.profile-form label,
+.change-pass-form label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.profile-form .input,
+.change-pass-form .input {
+  background: var(--bg-elevated);
+  padding: 10px 14px !important;
+  font-size: 0.9rem !important;
+  border-radius: 8px;
+}
+
+.profile-form .input:disabled {
+  background: var(--ink-100);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.profile-form .field-help,
+.change-pass-form .field-help {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: -2px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 0.5rem;
+}
+
+.form-actions .btn-trigger,
+.form-actions .btn-refresh {
+  padding: 10px 18px;
+  font-size: 0.88rem;
+}
+
+.auth-msg.success {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #6ee7b7;
 }
 
 /* ================================================================
@@ -4802,5 +4886,239 @@ button:active {
     right: auto;
     left: 0;
     min-width: 180px;
+  }
+}
+
+/* ================================================================
+   v4.6: Schedules - beautiful card-based form + rows
+   ================================================================ */
+
+.schedules-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+#addScheduleBtn {
+  padding: 14px 20px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  border-radius: 10px;
+  justify-content: center;
+}
+
+/* Empty state for schedules */
+.schedules-wrapper .empty-state {
+  padding: 2.5rem 1rem;
+  background: var(--ink-50);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.schedules-wrapper .empty-state .empty-icon {
+  font-size: 3.5rem;
+}
+
+/* Schedule form as card */
+.schedule-form {
+  background: linear-gradient(135deg, var(--bg-elevated), var(--ink-50));
+  border: 1.5px solid var(--accent-100);
+  border-radius: 14px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  box-shadow: 0 2px 8px -4px rgb(249 115 22 / 0.15);
+  animation: schedFormIn 0.25s var(--ease);
+}
+
+@keyframes schedFormIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.schedule-form h4 {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  margin: 0 0 0.25rem;
+  color: var(--text);
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.schedule-form .form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schedule-form label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.schedule-form .req {
+  color: var(--danger);
+}
+
+.schedule-form .input,
+.schedule-form .select {
+  background: var(--bg-elevated);
+  padding: 10px 14px !important;
+  font-size: 0.9rem !important;
+  border-radius: 8px;
+}
+
+/* Pages picker inside schedule form */
+.schedule-pages-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.schedule-pages-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.schedule-form .checkbox-chip {
+  padding: 8px 14px;
+  background: var(--ink-50);
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+
+.schedule-form .checkbox-chip:has(input:checked) {
+  background: var(--accent-50);
+  border-color: var(--accent);
+  color: var(--accent-700);
+}
+
+/* Schedule rows (existing schedules) */
+.schedules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-row {
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  transition: all 0.2s var(--ease);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-row.enabled {
+  border-color: var(--success);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.03), var(--bg-elevated));
+}
+
+.schedule-row.disabled {
+  opacity: 0.7;
+}
+
+.schedule-row:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.schedule-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.schedule-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.schedule-info strong {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.schedule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.schedule-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.schedule-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.schedule-actions .btn-meta {
+  min-width: 36px;
+  padding: 8px 10px;
+  font-size: 0.92rem;
+}
+
+.schedule-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.schedule-stats strong {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Modal inner padding polish */
+.modal {
+  padding: 1.75rem;
+}
+
+.modal h2 {
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .schedule-form {
+    padding: 1rem;
+  }
+  .schedule-row {
+    padding: 0.875rem 1rem;
+  }
+  .schedule-actions {
+    flex-wrap: wrap;
+  }
+  .modal {
+    padding: 1.25rem 1rem;
   }
 }
