@@ -2746,7 +2746,7 @@ function renderScheduleForm(sched, pages) {
         <div class="schedule-pages-picker">
           <label class="checkbox-chip">
             <input type="checkbox" id="schedPagesAll" ${allSelected ? 'checked' : ''}>
-            <span>✅ كل الصفحات (${pages.length})</span>
+            <span>كل الصفحات (${pages.length})</span>
           </label>
           <div id="schedPagesList" class="schedule-pages-list" ${allSelected ? 'hidden' : ''}>
             ${pages.map(p => `
