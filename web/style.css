@@ -79,6 +79,11 @@
   box-sizing: border-box;
 }
 
+/* HTML [hidden] must always win over CSS display */
+[hidden] {
+  display: none !important;
+}
+
 html {
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
@@ -128,6 +133,18 @@ time {
 #appRoot {
   position: relative;
   z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#appRoot .posts-grid {
+  flex: 1 0 auto;
+  min-height: 50vh;
+}
+
+#appRoot .footer-simple {
+  margin-top: auto;
 }
 
 .circle {
@@ -4105,6 +4122,10 @@ button:active {
   font-size: 0.85rem;
   color: var(--text);
   cursor: pointer;
+}
+
+.dropdown-item[hidden] {
+  display: none !important;
 }
 
 .dropdown-item:hover {

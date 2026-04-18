@@ -2603,17 +2603,33 @@ function renderAccountSettings() {
   return `
     <div class="account-settings">
       <h3>المعلومات الشخصية</h3>
-      <div class="settings-table">
-        <table>
-          <tr><td>اسم المستخدم:</td><td><code>${escapeHtml(u.username)}</code></td></tr>
-          <tr><td>الاسم المعروض:</td><td>${escapeHtml(u.display_name)}</td></tr>
-          <tr><td>البريد:</td><td>${escapeHtml(u.email || '—')}</td></tr>
-          <tr><td>الدور:</td><td>${u.role === 'admin' ? '👑 مشرف' : 'مستخدم'}</td></tr>
-        </table>
-      </div>
+      <form id="profileForm" class="profile-form">
+        <div class="form-field">
+          <label>اسم المستخدم</label>
+          <input type="text" id="profUsername" class="input" value="${escapeHtml(u.username)}" readonly disabled>
+          <span class="field-help">لا يمكن تغيير اسم المستخدم</span>
+        </div>
+        <div class="form-field">
+          <label>الاسم المعروض</label>
+          <input type="text" id="profDisplayName" class="input" value="${escapeHtml(u.display_name || '')}" placeholder="اسمك الكامل">
+        </div>
+        <div class="form-field">
+          <label>البريد الإلكتروني</label>
+          <input type="email" id="profEmail" class="input" value="${escapeHtml(u.email || '')}" placeholder="you@example.com" dir="ltr">
+        </div>
+        <div class="form-field">
+          <label>الدور</label>
+          <input type="text" class="input" value="${u.role === 'admin' ? '👑 مشرف' : 'مستخدم'}" readonly disabled>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-trigger">💾 حفظ التغييرات</button>
+        </div>
+        <p class="auth-msg success" id="profSuccess" hidden></p>
+        <p class="auth-msg error" id="profError" hidden></p>
+      </form>
 
       <h3>تغيير كلمة السر</h3>
-      <form id="changePasswordForm" class="change-pass-form">
+      <form id="changePasswordForm" class="profile-form">
         <div class="form-field">
           <label>كلمة السر الحالية</label>
           <input type="password" id="currentPass" class="input" required>
@@ -2622,36 +2638,95 @@ function renderAccountSettings() {
           <label>كلمة السر الجديدة (6+ أحرف)</label>
           <input type="password" id="newPass" class="input" required minlength="6">
         </div>
-        <button type="submit" class="btn-trigger btn-sm">تغيير</button>
-        <p class="auth-error" id="passError" hidden></p>
+        <div class="form-actions">
+          <button type="submit" class="btn-trigger">🔐 تغيير كلمة السر</button>
+        </div>
+        <p class="auth-msg error" id="passError" hidden></p>
       </form>
     </div>
   `;
 }
 
 function bindAccountSettings() {
-  const form = document.getElementById('changePasswordForm');
-  if (form) {
-    form.addEventListener('submit', async (e) => {
+  // Profile update
+  const profForm = document.getElementById('profileForm');
+  if (profForm) {
+    profForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById('profError');
+      const okEl = document.getElementById('profSuccess');
+      errEl.hidden = true;
+      okEl.hidden = true;
+
+      const displayName = document.getElementById('profDisplayName').value.trim();
+      const email = document.getElementById('profEmail').value.trim();
+
+      const btn = profForm.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.textContent = '⏳ جاري الحفظ…';
+
+      try {
+        const res = await fetch('/api/auth/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ display_name: displayName, email }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errEl.textContent = data.error || 'فشل الحفظ';
+          errEl.hidden = false;
+        } else {
+          AUTH.user = data.user || AUTH.user;
+          renderUserMenu();
+          okEl.textContent = '✅ تم حفظ التغييرات';
+          okEl.hidden = false;
+          showToast('✅ تم حفظ البيانات', 'success');
+        }
+      } catch (e) {
+        errEl.textContent = 'خطأ: ' + e.message;
+        errEl.hidden = false;
+      }
+      btn.disabled = false;
+      btn.textContent = '💾 حفظ التغييرات';
+    });
+  }
+
+  // Change password
+  const passForm = document.getElementById('changePasswordForm');
+  if (passForm) {
+    passForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const errEl = document.getElementById('passError');
       errEl.hidden = true;
       const current = document.getElementById('currentPass').value;
       const newPass = document.getElementById('newPass').value;
-      const res = await fetch('/api/auth/change-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ current_password: current, new_password: newPass }),
-      });
-      if (res.ok) {
-        showToast('✅ تم تغيير كلمة السر', 'success');
-        form.reset();
-      } else {
-        const d = await res.json();
-        errEl.textContent = d.error || 'فشل';
+
+      const btn = passForm.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.textContent = '⏳ جاري التغيير…';
+
+      try {
+        const res = await fetch('/api/auth/change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ current_password: current, new_password: newPass }),
+        });
+        if (res.ok) {
+          showToast('✅ تم تغيير كلمة السر', 'success');
+          passForm.reset();
+        } else {
+          const d = await res.json();
+          errEl.textContent = d.error || 'فشل';
+          errEl.hidden = false;
+        }
+      } catch (err) {
+        errEl.textContent = 'خطأ: ' + err.message;
         errEl.hidden = false;
       }
+      btn.disabled = false;
+      btn.textContent = '🔐 تغيير كلمة السر';
     });
   }
 }

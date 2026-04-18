@@ -212,6 +212,40 @@ def change_password():
     return jsonify({"ok": True})
 
 
+@auth_bp.route("/api/auth/profile", methods=["POST"])
+@login_required
+def update_profile():
+    """المستخدم يحدّث بياناته الشخصية (display_name + email)"""
+    data = request.get_json(silent=True) or {}
+    display_name = (data.get("display_name") or "").strip()
+    email = (data.get("email") or "").strip()
+
+    updates = {}
+    if display_name:
+        if len(display_name) > 128:
+            return jsonify({"error": "الاسم المعروض طويل"}), 400
+        updates["display_name"] = display_name
+    if email:
+        if "@" not in email or len(email) > 191:
+            return jsonify({"error": "البريد الإلكتروني غير صحيح"}), 400
+        updates["email"] = email
+    else:
+        updates["email"] = None
+
+    if not updates:
+        return jsonify({"error": "لا شيء للتحديث"}), 400
+
+    try:
+        db.update_user(current_user.id, **updates)
+    except Exception as e:
+        return jsonify({"error": f"فشل التحديث: {e}"}), 500
+
+    # Reload user data
+    fresh = db.get_user_by_id(current_user.id)
+    user = User(fresh)
+    return jsonify({"ok": True, "user": user.to_dict()})
+
+
 # Admin routes
 @auth_bp.route("/api/admin/users", methods=["GET"])
 @admin_required
