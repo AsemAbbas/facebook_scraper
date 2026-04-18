@@ -343,6 +343,149 @@ button:active {
 }
 
 /* ================================================================
+   Facebook brand button — polished "Open on Facebook" CTA
+   ================================================================ */
+.btn-facebook {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1.25rem;
+  min-height: 44px;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 10px;
+  background: linear-gradient(135deg, #1877F2 0%, #0866FF 50%, #0A5BE0 100%);
+  color: #ffffff !important;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-decoration: none !important;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow:
+    0 4px 12px -2px rgba(24, 119, 242, 0.45),
+    0 2px 4px -1px rgba(24, 119, 242, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.btn-facebook::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.18), transparent 55%);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+.btn-facebook::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -60%;
+  width: 40%;
+  height: 200%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+.btn-facebook:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 10px 24px -4px rgba(24, 119, 242, 0.55),
+    0 4px 8px -2px rgba(24, 119, 242, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  background: linear-gradient(135deg, #1a85ff 0%, #1571ff 50%, #0d62e5 100%);
+}
+
+.btn-facebook:hover::before {
+  opacity: 1;
+}
+
+.btn-facebook:hover::after {
+  left: 140%;
+}
+
+.btn-facebook:active {
+  transform: translateY(0);
+  box-shadow:
+    0 2px 6px -1px rgba(24, 119, 242, 0.4),
+    inset 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.btn-facebook:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.95),
+    0 0 0 5px #1877F2,
+    0 8px 20px -4px rgba(24, 119, 242, 0.5);
+}
+
+.btn-facebook .fb-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  fill: #ffffff;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.2));
+  transition: transform 0.25s ease;
+}
+
+.btn-facebook:hover .fb-icon {
+  transform: scale(1.1) rotate(-4deg);
+}
+
+.btn-facebook .fb-label {
+  white-space: nowrap;
+  position: relative;
+  z-index: 1;
+}
+
+.btn-facebook .fb-arrow {
+  font-size: 0.8em;
+  opacity: 0.85;
+  transition: transform 0.25s ease;
+  position: relative;
+  z-index: 1;
+}
+
+.btn-facebook:hover .fb-arrow {
+  transform: translate(2px, -2px);
+  opacity: 1;
+}
+
+/* RTL support: keep Facebook icon first from the reading direction */
+[dir="rtl"] .btn-facebook:hover .fb-arrow {
+  transform: translate(-2px, -2px);
+}
+
+.btn-facebook:disabled,
+.btn-facebook.disabled {
+  background: linear-gradient(135deg, #94a3b8, #64748b);
+  cursor: not-allowed;
+  box-shadow: none;
+  opacity: 0.6;
+}
+
+.btn-facebook:disabled:hover {
+  transform: none;
+}
+
+@media (max-width: 640px) {
+  .btn-facebook {
+    padding: 0.7rem 1rem;
+    font-size: 0.85rem;
+  }
+  .btn-facebook .fb-icon {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* ================================================================
    Stats bar
    ================================================================ */
 .stats-bar {

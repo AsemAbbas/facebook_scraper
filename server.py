@@ -28,6 +28,14 @@ from typing import Optional
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# --- Force UTF-8 on stdout/stderr so Arabic + emoji prints don't crash
+# on Windows consoles that default to cp1252 ---
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 try:
     from flask import (Flask, jsonify, request, send_from_directory,
                        Response, stream_with_context, make_response)
@@ -540,17 +548,22 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
         sources_instances.sort(key=lambda s: s.priority)
 
         if force_src:
-            sources_instances = [s for s in sources_instances if s.source_name == force_src]
+            # Put forced source first, keep others as fallback
+            preferred = [s for s in sources_instances if s.source_name == force_src]
+            others = [s for s in sources_instances if s.source_name != force_src]
+            sources_instances = preferred + others
+            if not preferred:
+                push_msg("warn", f"⚠️ المصدر المطلوب '{force_src}' غير مفعّل - استخدام البديل")
 
         if not sources_instances:
-            push_msg("error", "لا يوجد مصدر مفعّل - افتح الإعدادات وفعّل مصدر")
+            push_msg("error", "لا يوجد مصدر مفعّل - افتح الإعدادات وفعّل مصدراً أولاً")
             update(status="error",
                    finished_at=datetime.now(timezone.utc).isoformat())
             db.update_job(job_uid, status="error",
                           finished_at=datetime.now(timezone.utc))
             return
 
-        push_msg("info", f"🔌 المصادر: {', '.join(s.source_name for s in sources_instances)}")
+        push_msg("info", f"🔌 المصادر (بترتيب الأولوية): {', '.join(s.source_name for s in sources_instances)}")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -957,17 +970,22 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
 
         force_src = params.get("source")
         if force_src:
-            sources_instances = [s for s in sources_instances if s.source_name == force_src]
+            # Put forced source first, but keep others as fallback
+            preferred = [s for s in sources_instances if s.source_name == force_src]
+            others = [s for s in sources_instances if s.source_name != force_src]
+            sources_instances = preferred + others
+            if not preferred:
+                push_msg("warn", f"⚠️ المصدر المطلوب '{force_src}' غير مفعّل - استخدام البديل")
 
         if not sources_instances:
-            push_msg("error", "لا يوجد مصدر مفعّل")
+            push_msg("error", "لا يوجد مصدر مفعّل. افتح الإعدادات وفعّل مصدراً أولاً.")
             update(status="error",
                    finished_at=datetime.now(timezone.utc).isoformat())
             db.update_job(job_uid, status="error",
                           finished_at=datetime.now(timezone.utc))
             return
 
-        push_msg("info", f"🔌 المصادر: {', '.join(s.source_name for s in sources_instances)}")
+        push_msg("info", f"🔌 المصادر (بترتيب الأولوية): {', '.join(s.source_name for s in sources_instances)}")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
