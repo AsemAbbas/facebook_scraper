@@ -145,6 +145,9 @@ SOURCE_META = {
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 
+# Scheduler state
+SCHEDULER_STATE = {"running": False, "thread": None}
+
 
 # ======================================================================
 #  API: System status
@@ -781,6 +784,295 @@ def api_prefs_save():
 
 
 # ======================================================================
+#  API: Schedules (CRUD)
+# ======================================================================
+
+@app.route("/api/schedules", methods=["GET"])
+@login_required
+def api_schedules_list():
+    return jsonify({"schedules": db.list_schedules(current_user.id)})
+
+
+@app.route("/api/schedules", methods=["POST"])
+@login_required
+def api_schedules_create():
+    data = request.get_json(silent=True) or {}
+    if not data.get("name"):
+        return jsonify({"error": "الاسم مطلوب"}), 400
+    if not data.get("interval_minutes"):
+        return jsonify({"error": "الفاصل الزمني مطلوب"}), 400
+    sched_id = db.create_schedule(current_user.id, data)
+    return jsonify({"ok": True, "id": sched_id})
+
+
+@app.route("/api/schedules/<int:sid>", methods=["PATCH"])
+@login_required
+def api_schedules_update(sid):
+    data = request.get_json(silent=True) or {}
+    ok = db.update_schedule(current_user.id, sid, data)
+    if not ok:
+        return jsonify({"error": "لم يتم العثور على المهمة"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/schedules/<int:sid>", methods=["DELETE"])
+@login_required
+def api_schedules_delete(sid):
+    ok = db.delete_schedule(current_user.id, sid)
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/schedules/<int:sid>/run-now", methods=["POST"])
+@login_required
+def api_schedules_run_now(sid):
+    """تشغيل schedule يدوياً الآن"""
+    sched = db.get_schedule(current_user.id, sid)
+    if not sched:
+        return jsonify({"error": "غير موجود"}), 404
+    _run_scheduled_job(current_user.id, sched)
+    return jsonify({"ok": True})
+
+
+def _calculate_date_from(preset: str, custom_hours: int) -> Optional[str]:
+    """يرجع ISO date لـ date_from حسب الـ preset"""
+    from datetime import timedelta
+    hours_map = {
+        "last_1h": 1,
+        "last_24h": 24,
+        "last_2d": 48,
+        "last_week": 168,
+        "last_month": 720,
+    }
+    hours = hours_map.get(preset) if preset != "custom" else int(custom_hours or 24)
+    if hours is None:
+        return None
+    dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return dt.isoformat()
+
+
+def _run_scheduled_job(user_id: int, sched: dict):
+    """يحوّل schedule إلى scrape job"""
+    job_uid = uuid.uuid4().hex[:12]
+    date_from = _calculate_date_from(
+        sched.get("date_range_preset", "last_24h"),
+        sched.get("custom_hours_back", 24),
+    )
+
+    params = {
+        "slug": None,  # all pages (filter in thread)
+        "source": sched.get("source") if sched.get("source") != "auto" else None,
+        "date_from": date_from,
+        "date_to": None,
+        "trigger": "schedule",
+        "schedule_id": sched["id"],
+        "schedule_name": sched.get("name"),
+        "pages_filter": sched.get("pages") or [],
+    }
+
+    with JOBS_LOCK:
+        JOBS[job_uid] = {
+            "id": job_uid,
+            "user_id": user_id,
+            "status": "queued",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "progress": 0,
+            "total": 0,
+            "current_page": "",
+            "messages": [],
+            "result": None,
+            "params": params,
+        }
+    db.create_job(user_id, job_uid, params)
+
+    t = threading.Thread(
+        target=_run_scheduled_scrape,
+        args=(user_id, job_uid, params),
+        daemon=True,
+    )
+    t.start()
+    db.mark_schedule_ran(sched["id"])
+
+
+def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
+    """نسخة من _run_scrape_job تدعم pages_filter"""
+    def update(**kwargs):
+        with JOBS_LOCK:
+            if job_uid in JOBS:
+                JOBS[job_uid].update(kwargs)
+
+    def push_msg(level: str, text: str):
+        with JOBS_LOCK:
+            if job_uid in JOBS:
+                JOBS[job_uid]["messages"].append({
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "level": level,
+                    "text": text,
+                })
+
+    update(status="running")
+    db.update_job(job_uid, status="running")
+    push_msg("info", f"🕐 مهمة مجدولة: {params.get('schedule_name', '')}")
+
+    try:
+        pages_all = db.list_pages(user_id, only_enabled=True)
+        pages_filter = params.get("pages_filter") or []
+        if pages_filter:
+            pages_all = [p for p in pages_all if p["slug"] in pages_filter]
+
+        if not pages_all:
+            push_msg("error", "لا توجد صفحات مفعّلة")
+            update(status="error",
+                   finished_at=datetime.now(timezone.utc).isoformat())
+            db.update_job(job_uid, status="error",
+                          finished_at=datetime.now(timezone.utc))
+            return
+
+        update(total=len(pages_all))
+        push_msg("info", f"📄 سحب {len(pages_all)} صفحة")
+
+        user_sources = db.list_sources(user_id)
+        sources_instances = []
+        for s in user_sources:
+            if not s["enabled"]:
+                continue
+            cls = SOURCE_REGISTRY.get(s["source_name"])
+            if not cls:
+                continue
+            full_conf = dict(s.get("config") or {})
+            full_conf["name"] = s["source_name"]
+            full_conf["enabled"] = s["enabled"]
+            full_conf["priority"] = s["priority"]
+            secrets_ = db.get_source_with_token(user_id, s["source_name"])
+            tok = (secrets_ or {}).get("token", "")
+            if s["source_name"] == "apify":
+                full_conf["token"] = tok
+            elif s["source_name"] in ("fetchrss", "rssapp"):
+                full_conf["api_key"] = tok
+            elif s["source_name"] == "rsshub":
+                full_conf["base_url"] = full_conf.get("base_url") or (tok or "https://rsshub.app")
+            sources_instances.append(cls(full_conf))
+
+        sources_instances.sort(key=lambda s: s.priority)
+
+        force_src = params.get("source")
+        if force_src:
+            sources_instances = [s for s in sources_instances if s.source_name == force_src]
+
+        if not sources_instances:
+            push_msg("error", "لا يوجد مصدر مفعّل")
+            update(status="error",
+                   finished_at=datetime.now(timezone.utc).isoformat())
+            db.update_job(job_uid, status="error",
+                          finished_at=datetime.now(timezone.utc))
+            return
+
+        push_msg("info", f"🔌 المصادر: {', '.join(s.source_name for s in sources_instances)}")
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        total_new = 0
+        success_count = 0
+        sources_used: set = set()
+        started = datetime.now(timezone.utc)
+        date_from = params.get("date_from")
+        date_to = params.get("date_to")
+
+        for idx, page in enumerate(pages_all):
+            update(progress=idx, current_page=page.get("name", ""))
+            push_msg("info", f"📌 [{idx + 1}/{len(pages_all)}] {page.get('name', '')}")
+
+            done = False
+            for src in sources_instances:
+                if done:
+                    break
+                push_msg("info", f"  ⏳ محاولة {src.source_name}…")
+                try:
+                    posts_result = loop.run_until_complete(
+                        src.scrape_page(
+                            page["url"], page["slug"], page["name"],
+                            page.get("max_posts", 20),
+                            date_from=date_from, date_to=date_to,
+                        )
+                    )
+                    if posts_result:
+                        posts_dicts = [p.to_dict() for p in posts_result]
+                        new_n = db.insert_posts(user_id, page["slug"], posts_dicts)
+                        push_msg("success",
+                                 f"  ✅ {src.source_name}: {len(posts_result)} سُحب ({new_n} جديد)")
+                        total_new += new_n
+                        success_count += 1
+                        sources_used.add(src.source_name)
+                        done = True
+                    else:
+                        push_msg("warn", f"  ⚠️  {src.source_name} ما رجع منشورات")
+                except Exception as e:
+                    push_msg("error", f"  ❌ {src.source_name}: {str(e)[:120]}")
+
+        update(progress=len(pages_all))
+        finished = datetime.now(timezone.utc)
+        duration = int((finished - started).total_seconds())
+        final_status = "success" if success_count > 0 else "error"
+
+        with JOBS_LOCK:
+            msgs = JOBS.get(job_uid, {}).get("messages", [])
+
+        update(status=final_status, finished_at=finished.isoformat(),
+               result={"new_posts": total_new, "success": success_count,
+                       "failed": len(pages_all) - success_count,
+                       "sources_used": list(sources_used)})
+
+        db.update_job(
+            job_uid,
+            status=final_status,
+            finished_at=finished,
+            duration_seconds=duration,
+            sources_used=list(sources_used),
+            pages_total=len(pages_all),
+            pages_success=success_count,
+            pages_failed=len(pages_all) - success_count,
+            new_posts=total_new,
+            messages_json=json.dumps(msgs, ensure_ascii=False),
+        )
+
+        push_msg("success",
+                 f"🏁 انتهى. {total_new} منشور جديد · {success_count}/{len(pages_all)} صفحة")
+
+    except Exception as e:
+        push_msg("error", f"خطأ: {e}")
+        update(status="error", finished_at=datetime.now(timezone.utc).isoformat())
+        db.update_job(job_uid, status="error",
+                      finished_at=datetime.now(timezone.utc))
+
+
+def _scheduler_loop():
+    """خيط يفحص schedules المستحقة كل 30 ثانية"""
+    print("[scheduler] loop started")
+    while SCHEDULER_STATE.get("running"):
+        try:
+            due = db.get_due_schedules()
+            for sched in due:
+                try:
+                    _run_scheduled_job(sched["user_id"], sched)
+                    print(f"[scheduler] fired schedule #{sched['id']} '{sched.get('name')}'")
+                except Exception as e:
+                    print(f"[scheduler] error firing schedule {sched.get('id')}: {e}")
+        except Exception as e:
+            print(f"[scheduler] loop error: {e}")
+        time.sleep(30)
+
+
+def start_scheduler():
+    if SCHEDULER_STATE.get("running"):
+        return
+    SCHEDULER_STATE["running"] = True
+    t = threading.Thread(target=_scheduler_loop, daemon=True)
+    t.start()
+    SCHEDULER_STATE["thread"] = t
+
+
+# ======================================================================
 #  Static files
 # ======================================================================
 
@@ -817,6 +1109,13 @@ def main():
 
     if not no_browser:
         threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{port}")).start()
+
+    # Start scheduler background thread
+    try:
+        start_scheduler()
+        print("  ✅ Scheduler thread started")
+    except Exception as e:
+        print(f"  ⚠️  Scheduler failed to start: {e}")
 
     app.run(host=host, port=port, debug=False, threaded=True)
 

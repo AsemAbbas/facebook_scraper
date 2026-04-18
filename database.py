@@ -292,6 +292,27 @@ SCHEMA_STATEMENTS = [
         CONSTRAINT fk_prefs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
+    """
+    CREATE TABLE IF NOT EXISTS schedules (
+        id              INT AUTO_INCREMENT PRIMARY KEY,
+        user_id         INT NOT NULL,
+        name            VARCHAR(128) NOT NULL,
+        enabled         TINYINT(1) DEFAULT 1,
+        pages_json      TEXT,
+        source          VARCHAR(32) DEFAULT 'auto',
+        interval_minutes INT NOT NULL,
+        date_range_preset VARCHAR(20) DEFAULT 'last_24h',
+        custom_hours_back INT DEFAULT 24,
+        last_run        DATETIME NULL,
+        next_run        DATETIME NULL,
+        total_runs      INT DEFAULT 0,
+        created_at      DATETIME NOT NULL,
+        updated_at      DATETIME NOT NULL,
+        KEY idx_user_enabled (user_id, enabled),
+        KEY idx_next_run (next_run),
+        CONSTRAINT fk_sched_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
 ]
 
 
@@ -922,6 +943,177 @@ def save_prefs(user_id: int, prefs: dict) -> None:
                 prefs_json=VALUES(prefs_json),
                 updated_at=VALUES(updated_at)
         """, (user_id, json.dumps(prefs, ensure_ascii=False), now))
+
+
+# ======================================================================
+#  Schedules operations
+# ======================================================================
+
+INTERVAL_PRESETS = {
+    "hourly": 60,
+    "3h": 180,
+    "6h": 360,
+    "12h": 720,
+    "daily": 1440,
+    "weekly": 10080,
+}
+
+DATE_RANGE_PRESETS = {
+    "last_1h": 1,
+    "last_24h": 24,
+    "last_2d": 48,
+    "last_week": 168,
+    "last_month": 720,
+    "custom": None,  # uses custom_hours_back
+}
+
+
+def _calc_next_run(interval_minutes: int, from_dt: Optional[datetime] = None) -> datetime:
+    """يحسب next_run بناءً على الفاصل"""
+    from datetime import timedelta
+    base = from_dt or datetime.now(timezone.utc)
+    return base + timedelta(minutes=interval_minutes)
+
+
+def list_schedules(user_id: int) -> list[dict]:
+    with db_cursor() as cur:
+        cur.execute("""
+            SELECT * FROM schedules
+            WHERE user_id=%s
+            ORDER BY created_at DESC
+        """, (user_id,))
+        result = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["enabled"] = bool(d["enabled"])
+            try:
+                d["pages"] = json.loads(d.get("pages_json") or "[]")
+            except Exception:
+                d["pages"] = []
+            d.pop("pages_json", None)
+            for k in ("last_run", "next_run", "created_at", "updated_at"):
+                if d.get(k) and hasattr(d[k], "isoformat"):
+                    d[k] = d[k].isoformat()
+            result.append(d)
+        return result
+
+
+def get_schedule(user_id: int, schedule_id: int) -> Optional[dict]:
+    with db_cursor() as cur:
+        cur.execute("SELECT * FROM schedules WHERE user_id=%s AND id=%s",
+                    (user_id, schedule_id))
+        r = cur.fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        d["enabled"] = bool(d["enabled"])
+        try:
+            d["pages"] = json.loads(d.get("pages_json") or "[]")
+        except Exception:
+            d["pages"] = []
+        d.pop("pages_json", None)
+        return d
+
+
+def create_schedule(user_id: int, data: dict) -> int:
+    now = datetime.now(timezone.utc)
+    pages = data.get("pages") or []
+    interval_minutes = int(data.get("interval_minutes") or 60)
+    next_run = _calc_next_run(interval_minutes, now)
+
+    with db_cursor() as cur:
+        cur.execute("""
+            INSERT INTO schedules
+            (user_id, name, enabled, pages_json, source, interval_minutes,
+             date_range_preset, custom_hours_back, next_run, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            user_id,
+            (data.get("name") or "مهمة جديدة").strip()[:128],
+            1 if data.get("enabled", True) else 0,
+            json.dumps(pages, ensure_ascii=False),
+            data.get("source") or "auto",
+            interval_minutes,
+            data.get("date_range_preset") or "last_24h",
+            int(data.get("custom_hours_back") or 24),
+            next_run,
+            now,
+            now,
+        ))
+        return cur.lastrowid
+
+
+def update_schedule(user_id: int, schedule_id: int, data: dict) -> bool:
+    now = datetime.now(timezone.utc)
+    fields = {"updated_at": now}
+
+    if "name" in data:
+        fields["name"] = (data["name"] or "").strip()[:128]
+    if "enabled" in data:
+        fields["enabled"] = 1 if data["enabled"] else 0
+    if "pages" in data:
+        fields["pages_json"] = json.dumps(data["pages"] or [], ensure_ascii=False)
+    if "source" in data:
+        fields["source"] = data["source"] or "auto"
+    if "interval_minutes" in data:
+        fields["interval_minutes"] = int(data["interval_minutes"])
+        fields["next_run"] = _calc_next_run(fields["interval_minutes"], now)
+    if "date_range_preset" in data:
+        fields["date_range_preset"] = data["date_range_preset"]
+    if "custom_hours_back" in data:
+        fields["custom_hours_back"] = int(data["custom_hours_back"])
+
+    cols = ", ".join(f"{k}=%s" for k in fields)
+    with db_cursor() as cur:
+        cur.execute(
+            f"UPDATE schedules SET {cols} WHERE user_id=%s AND id=%s",
+            (*fields.values(), user_id, schedule_id)
+        )
+        return cur.rowcount > 0
+
+
+def delete_schedule(user_id: int, schedule_id: int) -> bool:
+    with db_cursor() as cur:
+        cur.execute("DELETE FROM schedules WHERE user_id=%s AND id=%s",
+                    (user_id, schedule_id))
+        return cur.rowcount > 0
+
+
+def mark_schedule_ran(schedule_id: int) -> None:
+    now = datetime.now(timezone.utc)
+    with db_cursor() as cur:
+        # Get interval
+        cur.execute("SELECT interval_minutes FROM schedules WHERE id=%s",
+                    (schedule_id,))
+        row = cur.fetchone()
+        if not row:
+            return
+        next_run = _calc_next_run(int(row["interval_minutes"]), now)
+        cur.execute("""
+            UPDATE schedules
+            SET last_run=%s, next_run=%s, total_runs=total_runs+1, updated_at=%s
+            WHERE id=%s
+        """, (now, next_run, now, schedule_id))
+
+
+def get_due_schedules() -> list[dict]:
+    """يرجع كل schedules المستحقة (next_run <= now && enabled)"""
+    with db_cursor() as cur:
+        cur.execute("""
+            SELECT * FROM schedules
+            WHERE enabled=1 AND (next_run IS NULL OR next_run <= %s)
+        """, (datetime.now(timezone.utc),))
+        result = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["enabled"] = bool(d["enabled"])
+            try:
+                d["pages"] = json.loads(d.get("pages_json") or "[]")
+            except Exception:
+                d["pages"] = []
+            d.pop("pages_json", None)
+            result.append(d)
+        return result
 
 
 # ======================================================================

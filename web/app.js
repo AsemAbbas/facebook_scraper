@@ -870,6 +870,21 @@ function updateLastUpdate(iso) {
 
 // ========= Helpers =========
 
+function ensureFullFbUrl(url) {
+  if (!url) return '';
+  url = String(url).trim();
+  if (url.startsWith('//')) return 'https:' + url;
+  if (url.startsWith('/')) return 'https://www.facebook.com' + url;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  // mbasic or other
+  if (url.startsWith('www.facebook.com') || url.startsWith('facebook.com') ||
+      url.startsWith('mbasic.facebook.com') || url.startsWith('m.facebook.com')) {
+    return 'https://' + url;
+  }
+  // Probably a relative path without leading /
+  return 'https://www.facebook.com/' + url;
+}
+
 function escapeHtml(s) {
   return String(s || '')
     .replace(/&/g, '&amp;')
@@ -1030,7 +1045,7 @@ function openBackendTriggerModal() {
         </div>
       ` : `
         <div class="alert alert-info">
-          ✨ المصادر المفعّلة: ${enabledSources.map(s => s.icon + ' ' + s.name).join('، ')}
+          ✨ المصادر المفعّلة: ${enabledSources.map(s => (s.icon || '🔌') + ' ' + (s.label || s.source_name || s.name || '—')).join('، ')}
         </div>
       `}
 
@@ -1047,7 +1062,7 @@ function openBackendTriggerModal() {
         <select id="runSourceSelect" class="select">
           <option value="">تلقائي (حسب الأولوية)</option>
           ${enabledSources.map(s =>
-            `<option value="${s.name}">${s.icon} ${s.name}</option>`
+            `<option value="${s.source_name || s.name}">${s.icon || '🔌'} ${s.label || s.source_name || s.name}</option>`
           ).join('')}
         </select>
       </div>
@@ -1962,9 +1977,21 @@ function openPostDetailModal(post) {
       ${breakdownHtml}
       ${commentsHtml}
 
+      ${(!comments && !reactions && post.source === 'playwright') ? `
+        <div class="alert alert-info" style="margin-top: 0.75rem">
+          ℹ️ <strong>ملاحظة:</strong> مصدر Playwright لا يجلب أعداد التفاعلات والتعليقات بشكل دقيق لأن فيسبوك يخفيها عن الزوار غير المسجلين.
+          للحصول على تفاعلات وتعليقات دقيقة استخدم <strong>Apify</strong> من الإعدادات.
+        </div>
+      ` : ''}
+
       <div class="detail-actions">
-        ${post.post_url ? `<a href="${escapeHtml(post.post_url)}" target="_blank" rel="noopener" class="btn-trigger">فتح على فيسبوك ↗</a>` : ''}
-        <button class="btn-refresh" id="copyPostLink">نسخ الرابط</button>
+        ${post.post_url
+          ? `<a href="${escapeHtml(ensureFullFbUrl(post.post_url))}" target="_blank" rel="noopener noreferrer" class="btn-trigger">
+               فتح على فيسبوك ↗
+             </a>`
+          : `<button class="btn-refresh" disabled title="الرابط غير متاح">رابط غير متاح ⊘</button>`
+        }
+        <button class="btn-refresh" id="copyPostLink" ${!post.post_url ? 'disabled' : ''}>نسخ الرابط</button>
         <button class="btn-refresh" id="copyPostText">نسخ النص</button>
       </div>
 
@@ -1984,7 +2011,7 @@ function openPostDetailModal(post) {
   const cl = document.getElementById('copyPostLink');
   if (cl) cl.addEventListener('click', () => {
     if (post.post_url) {
-      navigator.clipboard.writeText(post.post_url);
+      navigator.clipboard.writeText(ensureFullFbUrl(post.post_url));
       showToast('تم نسخ الرابط', 'success');
     } else {
       showToast('لا يوجد رابط', 'error');
@@ -2243,15 +2270,15 @@ function openFirstRunWizard() {
         </div>
         <div class="wizard-step-body">
           ${hasAnySource
-            ? `<p class="wizard-ok">✅ مفعّل: ${enabledSources.map(s => s.icon + ' ' + s.name).join('، ')}</p>`
+            ? `<p class="wizard-ok">✅ مفعّل: ${enabledSources.map(s => (s.icon || '🔌') + ' ' + (s.label || s.source_name || s.name)).join('، ')}</p>`
             : `
               <p>اختر مصدراً واحداً للبدء (نوصي بـ Playwright للتجربة):</p>
               <div class="wizard-sources">
                 ${sourcesStatus.map(s => `
-                  <button class="wizard-source" data-source="${s.name}">
-                    <span class="source-icon">${s.icon}</span>
+                  <button class="wizard-source" data-source="${s.source_name || s.name}">
+                    <span class="source-icon">${s.icon || '🔌'}</span>
                     <div class="source-info">
-                      <strong>${s.name}</strong>
+                      <strong>${s.label || s.source_name || s.name}</strong>
                       <span>${s.description}</span>
                       <em>${s.price}</em>
                     </div>
@@ -2410,23 +2437,14 @@ function bindWizardEvents() {
 }
 
 async function enableSourceInConfig(sourceName) {
-  if (!STATE.hasBackend) return false;
   try {
-    // Get current config
-    const res = await fetch('/api/config');
-    if (!res.ok) return false;
-    const data = await res.json();
-    const config = data.config || {};
-    (config.sources || []).forEach(s => {
-      if (s.name === sourceName) s.enabled = true;
-    });
-    // Save
-    const saveRes = await fetch('/api/config', {
-      method: 'POST',
+    const res = await fetch(`/api/sources/${sourceName}`, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config),
+      credentials: 'include',
+      body: JSON.stringify({ enabled: true }),
     });
-    return saveRes.ok;
+    return res.ok;
   } catch {
     return false;
   }
@@ -2441,6 +2459,7 @@ async function openSettingsModal() {
     <div class="settings-modal">
       <div class="settings-tabs">
         <button class="settings-tab active" data-tab="sources">🔌 المصادر</button>
+        <button class="settings-tab" data-tab="schedules">🕐 المجدول</button>
         <button class="settings-tab" data-tab="account">👤 الحساب</button>
         ${AUTH && AUTH.user && AUTH.user.role === 'admin' ? `
           <button class="settings-tab" data-tab="users">👥 المستخدمون</button>
@@ -2449,6 +2468,9 @@ async function openSettingsModal() {
 
       <div id="settings-sources" class="settings-pane">
         ${renderSourcesSettings(sources)}
+      </div>
+      <div id="settings-schedules" class="settings-pane" hidden>
+        <div class="loading"><div class="spinner"></div></div>
       </div>
       <div id="settings-account" class="settings-pane" hidden>
         ${renderAccountSettings()}
@@ -2468,11 +2490,377 @@ async function openSettingsModal() {
       document.querySelectorAll('.settings-pane').forEach(p => p.hidden = true);
       document.getElementById(`settings-${tab.dataset.tab}`).hidden = false;
       if (tab.dataset.tab === 'users') loadUsersTab();
+      if (tab.dataset.tab === 'schedules') loadSchedulesTab();
     });
   });
 
   bindSourceCards();
   bindAccountSettings();
+}
+
+// ========= Schedules =========
+
+async function loadSchedulesTab() {
+  const pane = document.getElementById('settings-schedules');
+  if (!pane) return;
+  pane.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+  try {
+    const [schedRes, pagesRes] = await Promise.all([
+      fetch('/api/schedules', { credentials: 'include' }),
+      fetch('/api/pages', { credentials: 'include' }),
+    ]);
+    const schedules = schedRes.ok ? (await schedRes.json()).schedules || [] : [];
+    const pages = pagesRes.ok ? (await pagesRes.json()).pages || [] : [];
+
+    pane.innerHTML = renderSchedulesTab(schedules, pages);
+    bindSchedulesTab(pages);
+  } catch (e) {
+    pane.innerHTML = `<p class="note">فشل: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function renderSchedulesTab(schedules, pages) {
+  return `
+    <div class="schedules-wrapper">
+      <div class="settings-intro">
+        <strong>🕐 جدولة تلقائية للسحب</strong>
+        <br>أنشئ مهمة تشتغل تلقائياً كل فترة وتسحب المنشورات حسب الفترة اللي تحددها.
+      </div>
+
+      <button class="btn-trigger btn-full" id="addScheduleBtn">
+        ➕ إضافة مهمة جديدة
+      </button>
+
+      <div id="scheduleFormWrap" hidden></div>
+
+      <div class="schedules-list">
+        ${schedules.length === 0
+          ? `<div class="empty-state">
+               <span class="empty-icon">🕐</span>
+               <h4>لا توجد مهام مجدولة بعد</h4>
+               <p>أنشئ مهمة لتشتغل تلقائياً - مثلاً "كل ساعة اسحب آخر يوم"</p>
+             </div>`
+          : schedules.map(s => renderScheduleRow(s, pages)).join('')
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderScheduleRow(s, pages) {
+  const pagesLabel = !s.pages || s.pages.length === 0
+    ? 'كل الصفحات'
+    : s.pages.map(slug => {
+        const p = pages.find(pp => pp.slug === slug);
+        return p ? p.name : slug;
+      }).join('، ');
+
+  const intervalLabel = scheduleIntervalLabel(s.interval_minutes);
+  const dateRangeLabel = scheduleDateRangeLabel(s.date_range_preset, s.custom_hours_back);
+  const nextRun = s.next_run ? formatRelTime(s.next_run) : '—';
+  const lastRun = s.last_run ? formatRelTime(s.last_run) : 'لم يتم';
+
+  return `
+    <div class="schedule-row ${s.enabled ? 'enabled' : 'disabled'}" data-id="${s.id}">
+      <div class="schedule-head">
+        <label class="switch">
+          <input type="checkbox" class="schedule-toggle" ${s.enabled ? 'checked' : ''}>
+          <span class="slider"></span>
+        </label>
+        <div class="schedule-info">
+          <strong>${escapeHtml(s.name)}</strong>
+          <div class="schedule-meta">
+            <span>🔄 ${intervalLabel}</span>
+            <span>📅 ${dateRangeLabel}</span>
+            <span>📄 ${escapeHtml(pagesLabel)}</span>
+          </div>
+        </div>
+        <div class="schedule-actions">
+          <button class="btn-meta schedule-run-btn" title="شغّل الآن">▶</button>
+          <button class="btn-meta schedule-edit-btn" title="تعديل">✏️</button>
+          <button class="btn-meta danger schedule-delete-btn" title="حذف">🗑</button>
+        </div>
+      </div>
+      <div class="schedule-stats">
+        <span>التالي: <strong>${nextRun}</strong></span>
+        <span>الأخير: <strong>${lastRun}</strong></span>
+        <span>إجمالي التشغيلات: <strong>${s.total_runs || 0}</strong></span>
+      </div>
+    </div>
+  `;
+}
+
+function scheduleIntervalLabel(minutes) {
+  if (minutes < 60) return `كل ${minutes} دقيقة`;
+  if (minutes === 60) return 'كل ساعة';
+  if (minutes < 1440) return `كل ${Math.round(minutes / 60)} ساعة`;
+  if (minutes === 1440) return 'كل يوم';
+  if (minutes === 10080) return 'كل أسبوع';
+  return `كل ${Math.round(minutes / 1440)} يوم`;
+}
+
+function scheduleDateRangeLabel(preset, custom) {
+  const map = {
+    last_1h: 'آخر ساعة',
+    last_24h: 'آخر 24 ساعة',
+    last_2d: 'آخر يومين',
+    last_week: 'آخر أسبوع',
+    last_month: 'آخر شهر',
+  };
+  if (preset === 'custom') return `آخر ${custom} ساعة`;
+  return map[preset] || preset;
+}
+
+function bindSchedulesTab(pages) {
+  const addBtn = document.getElementById('addScheduleBtn');
+  const formWrap = document.getElementById('scheduleFormWrap');
+
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      formWrap.hidden = false;
+      formWrap.innerHTML = renderScheduleForm(null, pages);
+      bindScheduleForm(null, pages);
+      formWrap.scrollIntoView({behavior: 'smooth', block: 'center'});
+    });
+  }
+
+  // Edit buttons
+  document.querySelectorAll('.schedule-edit-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.closest('.schedule-row').dataset.id;
+      const res = await fetch('/api/schedules', {credentials: 'include'});
+      const data = await res.json();
+      const sched = (data.schedules || []).find(s => s.id == id);
+      if (sched) {
+        formWrap.hidden = false;
+        formWrap.innerHTML = renderScheduleForm(sched, pages);
+        bindScheduleForm(sched, pages);
+        formWrap.scrollIntoView({behavior: 'smooth', block: 'center'});
+      }
+    });
+  });
+
+  // Toggle enabled
+  document.querySelectorAll('.schedule-toggle').forEach(tog => {
+    tog.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const id = tog.closest('.schedule-row').dataset.id;
+      await fetch(`/api/schedules/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'include',
+        body: JSON.stringify({enabled: tog.checked}),
+      });
+      showToast(tog.checked ? '✅ تم التفعيل' : '⊘ تم الإيقاف', 'success');
+    });
+  });
+
+  // Delete
+  document.querySelectorAll('.schedule-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('حذف هذه المهمة المجدولة؟')) return;
+      const id = btn.closest('.schedule-row').dataset.id;
+      const res = await fetch(`/api/schedules/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        showToast('✅ تم الحذف', 'success');
+        loadSchedulesTab();
+      }
+    });
+  });
+
+  // Run now
+  document.querySelectorAll('.schedule-run-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.closest('.schedule-row').dataset.id;
+      btn.disabled = true;
+      btn.textContent = '⏳';
+      const res = await fetch(`/api/schedules/${id}/run-now`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      btn.disabled = false;
+      btn.textContent = '▶';
+      if (res.ok) {
+        showToast('🚀 تم بدء التشغيل', 'success');
+      } else {
+        showToast('فشل التشغيل', 'error');
+      }
+    });
+  });
+}
+
+function renderScheduleForm(sched, pages) {
+  const s = sched || {};
+  const selectedPages = s.pages || [];
+  const allSelected = !selectedPages.length;
+
+  return `
+    <div class="schedule-form">
+      <h4>${sched ? '✏️ تعديل مهمة' : '➕ مهمة جديدة'}</h4>
+
+      <div class="form-field">
+        <label>اسم المهمة <span class="req">*</span></label>
+        <input type="text" id="schedName" class="input" value="${escapeHtml(s.name || '')}" placeholder="مثال: أخبار الجزيرة اليومية" required>
+      </div>
+
+      <div class="form-field">
+        <label>التكرار (كل كم)</label>
+        <select id="schedInterval" class="select">
+          <option value="60" ${s.interval_minutes === 60 ? 'selected' : ''}>كل ساعة</option>
+          <option value="180" ${s.interval_minutes === 180 ? 'selected' : ''}>كل 3 ساعات</option>
+          <option value="360" ${s.interval_minutes === 360 || !s.interval_minutes ? 'selected' : ''}>كل 6 ساعات</option>
+          <option value="720" ${s.interval_minutes === 720 ? 'selected' : ''}>كل 12 ساعة</option>
+          <option value="1440" ${s.interval_minutes === 1440 ? 'selected' : ''}>كل يوم</option>
+          <option value="10080" ${s.interval_minutes === 10080 ? 'selected' : ''}>كل أسبوع</option>
+          <option value="custom">مخصّص...</option>
+        </select>
+        <input type="number" id="schedIntervalCustom" class="input" placeholder="مثلاً: 30 (دقيقة)" min="15" max="43200" hidden>
+      </div>
+
+      <div class="form-field">
+        <label>نطاق المنشورات (اسحب المنشورات من ...)</label>
+        <select id="schedDateRange" class="select">
+          <option value="last_1h" ${s.date_range_preset === 'last_1h' ? 'selected' : ''}>آخر ساعة</option>
+          <option value="last_24h" ${s.date_range_preset === 'last_24h' || !s.date_range_preset ? 'selected' : ''}>آخر 24 ساعة (يوم)</option>
+          <option value="last_2d" ${s.date_range_preset === 'last_2d' ? 'selected' : ''}>آخر يومين</option>
+          <option value="last_week" ${s.date_range_preset === 'last_week' ? 'selected' : ''}>آخر أسبوع</option>
+          <option value="last_month" ${s.date_range_preset === 'last_month' ? 'selected' : ''}>آخر شهر</option>
+          <option value="custom" ${s.date_range_preset === 'custom' ? 'selected' : ''}>مخصّص (ساعات)</option>
+        </select>
+        <input type="number" id="schedCustomHours" class="input" placeholder="كم ساعة للخلف؟ (مثلاً 72)" value="${s.custom_hours_back || 24}" min="1" max="8760" ${s.date_range_preset === 'custom' ? '' : 'hidden'}>
+      </div>
+
+      <div class="form-field">
+        <label>الصفحات (اتركها فارغة لكل الصفحات)</label>
+        <div class="schedule-pages-picker">
+          <label class="checkbox-chip">
+            <input type="checkbox" id="schedPagesAll" ${allSelected ? 'checked' : ''}>
+            <span>✅ كل الصفحات (${pages.length})</span>
+          </label>
+          <div id="schedPagesList" class="schedule-pages-list" ${allSelected ? 'hidden' : ''}>
+            ${pages.map(p => `
+              <label class="checkbox-chip">
+                <input type="checkbox" class="schedule-page-check" value="${escapeHtml(p.slug)}" ${selectedPages.includes(p.slug) ? 'checked' : ''}>
+                <span>${escapeHtml(p.name)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      <div class="form-field">
+        <label>المصدر</label>
+        <select id="schedSource" class="select">
+          <option value="auto" ${(s.source || 'auto') === 'auto' ? 'selected' : ''}>تلقائي (حسب الأولوية)</option>
+          ${(STATE.sourcesStatus || []).filter(x => x.enabled).map(x =>
+            `<option value="${x.source_name}" ${s.source === x.source_name ? 'selected' : ''}>${x.icon} ${x.label}</option>`
+          ).join('')}
+        </select>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" class="btn-trigger" id="schedSaveBtn">${sched ? '💾 حفظ التغييرات' : '➕ إنشاء المهمة'}</button>
+        <button type="button" class="btn-refresh" id="schedCancelBtn">إلغاء</button>
+      </div>
+      <p class="auth-msg error" id="schedError" hidden></p>
+    </div>
+  `;
+}
+
+function bindScheduleForm(sched, pages) {
+  const wrap = document.getElementById('scheduleFormWrap');
+
+  // Interval custom toggle
+  const intervalSel = document.getElementById('schedInterval');
+  const intervalCustom = document.getElementById('schedIntervalCustom');
+  intervalSel.addEventListener('change', () => {
+    intervalCustom.hidden = intervalSel.value !== 'custom';
+  });
+
+  // Date range custom toggle
+  const dateRangeSel = document.getElementById('schedDateRange');
+  const customHours = document.getElementById('schedCustomHours');
+  dateRangeSel.addEventListener('change', () => {
+    customHours.hidden = dateRangeSel.value !== 'custom';
+  });
+
+  // All pages toggle
+  const allCheck = document.getElementById('schedPagesAll');
+  const pagesList = document.getElementById('schedPagesList');
+  allCheck.addEventListener('change', () => {
+    pagesList.hidden = allCheck.checked;
+  });
+
+  // Save
+  document.getElementById('schedSaveBtn').addEventListener('click', async () => {
+    const errEl = document.getElementById('schedError');
+    errEl.hidden = true;
+
+    const name = document.getElementById('schedName').value.trim();
+    if (!name) {
+      errEl.textContent = 'الاسم مطلوب';
+      errEl.hidden = false;
+      return;
+    }
+
+    let intervalMinutes;
+    if (intervalSel.value === 'custom') {
+      intervalMinutes = parseInt(intervalCustom.value) || 60;
+    } else {
+      intervalMinutes = parseInt(intervalSel.value);
+    }
+    if (intervalMinutes < 15) intervalMinutes = 15;
+
+    const allSelected = allCheck.checked;
+    const selectedPages = allSelected ? [] :
+      Array.from(document.querySelectorAll('.schedule-page-check:checked')).map(c => c.value);
+
+    const body = {
+      name,
+      enabled: sched ? sched.enabled : true,
+      interval_minutes: intervalMinutes,
+      date_range_preset: dateRangeSel.value,
+      custom_hours_back: parseInt(customHours.value) || 24,
+      pages: selectedPages,
+      source: document.getElementById('schedSource').value,
+    };
+
+    const method = sched ? 'PATCH' : 'POST';
+    const url = sched ? `/api/schedules/${sched.id}` : '/api/schedules';
+
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error || 'فشل';
+        errEl.hidden = false;
+        return;
+      }
+      showToast(sched ? '✅ تم الحفظ' : '✅ تم إنشاء المهمة', 'success');
+      loadSchedulesTab();
+    } catch (e) {
+      errEl.textContent = 'خطأ: ' + e.message;
+      errEl.hidden = false;
+    }
+  });
+
+  // Cancel
+  document.getElementById('schedCancelBtn').addEventListener('click', () => {
+    wrap.hidden = true;
+    wrap.innerHTML = '';
+  });
 }
 
 function renderSourcesSettings(sources) {

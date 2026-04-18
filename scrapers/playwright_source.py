@@ -156,7 +156,23 @@ class PlaywrightSource(BaseScraper):
         page_name: str,
     ) -> UnifiedPost | None:
         """استخراج بيانات منشور واحد من article element"""
-        # النص
+
+        # ========== FILTER 1: skip sidebar / ads / suggestions ==========
+        # Check if article is a legit post (not ad/suggestion/sidebar)
+        try:
+            # Skip sponsored
+            sponsored_hints = [
+                'Sponsored', 'ممول', 'مموّل', 'إعلان',
+                'Suggested for you', 'مقترح لك',
+                'People you may know', 'أشخاص قد تعرفهم',
+            ]
+            article_text = (await article.inner_text(timeout=2000))[:500]
+            if any(h.lower() in article_text.lower() for h in sponsored_hints):
+                return None
+        except Exception:
+            pass
+
+        # ========== النص ==========
         text = ""
         for selector in [
             '[data-ad-preview="message"]',
@@ -174,28 +190,87 @@ class PlaywrightSource(BaseScraper):
         if not text or len(text) < 5:
             return None
 
-        # الرابط والوقت
+        # ========== FILTER 2: find post permalink ==========
+        # A genuine post MUST have a permalink. If we can't find one → skip.
         post_url = ""
         timestamp_text = ""
+        candidate_urls: list[tuple[str, str]] = []  # (href, text)
         try:
-            link = article.locator(
-                'a[href*="/posts/"], a[href*="/photos/"], a[href*="/videos/"], a[href*="story_fbid"], a[href*="/permalink/"]'
-            ).first
-            post_url = await link.get_attribute("href", timeout=2000) or ""
-            timestamp_text = await link.inner_text(timeout=2000) or ""
+            # Collect ALL candidate links inside article
+            anchors = article.locator(
+                'a[href*="/posts/"], a[href*="/photos/"], a[href*="/videos/"], '
+                'a[href*="story_fbid"], a[href*="/permalink/"], a[href*="pfbid"]'
+            )
+            n = await anchors.count()
+            for i in range(min(n, 10)):
+                try:
+                    href = await anchors.nth(i).get_attribute("href", timeout=800) or ""
+                    inner = await anchors.nth(i).inner_text(timeout=500) or ""
+                    if href:
+                        candidate_urls.append((href, inner))
+                except Exception:
+                    continue
         except Exception:
             pass
 
-        post_url = N.normalize_fb_url(post_url)
+        # Pick the best candidate: prefer one that belongs to the page being scraped
+        page_slug_or_id = ""
+        try:
+            import re as _re
+            m = _re.search(r"facebook\.com/([^/?#]+)", page_url)
+            if m:
+                page_slug_or_id = m.group(1).lower()
+        except Exception:
+            pass
+
+        best_url = ""
+        best_text = ""
+        # First pass: URL contains the page slug
+        for href, inner in candidate_urls:
+            if page_slug_or_id and page_slug_or_id in href.lower():
+                best_url = href
+                best_text = inner
+                break
+        # Fallback: first candidate that looks like a permalink
+        if not best_url:
+            for href, inner in candidate_urls:
+                if any(k in href for k in ("/posts/", "pfbid", "story_fbid", "/permalink/")):
+                    best_url = href
+                    best_text = inner
+                    break
+        # Fallback: first candidate
+        if not best_url and candidate_urls:
+            best_url, best_text = candidate_urls[0]
+
+        post_url = N.normalize_fb_url(best_url)
+        timestamp_text = best_text
+
+        # FILTER 3: If post has no permalink, it's likely not a real post (skip)
+        if not post_url or not any(k in post_url for k in ("/posts/", "pfbid", "story_fbid", "/permalink/", "/videos/", "/photos/")):
+            return None
+
+        # FILTER 4: URL must belong to the page (not reshared from elsewhere)
+        # BUT: only strict-check when we know page_slug_or_id from URL
+        if page_slug_or_id and page_slug_or_id not in post_url.lower():
+            # URL is to a different page → this is a shared post or sidebar content
+            return None
 
         # معرّف فريد
         post_id = N.extract_post_id(post_url) or self.make_post_id("", text)
 
-        # الصورة (أول img في المقال)
+        # ========== الصورة ==========
         image_url = ""
         try:
-            img = article.locator("img").first
-            image_url = await img.get_attribute("src", timeout=1000) or ""
+            imgs = article.locator("img")
+            icount = await imgs.count()
+            for i in range(min(icount, 5)):
+                try:
+                    src = await imgs.nth(i).get_attribute("src", timeout=500)
+                    if src and "fbcdn" in src and "emoji" not in src and "static" not in src:
+                        image_url = src
+                        break
+                except Exception:
+                    continue
         except Exception:
             pass
 
