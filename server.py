@@ -1098,6 +1098,19 @@ def start_scheduler():
     SCHEDULER_STATE["thread"] = t
 
 
+# Auto-start the scheduler when loaded under a WSGI server (gunicorn / uwsgi /
+# passenger / mod_wsgi). When running as `python server.py` main() does this
+# explicitly, so we guard with a flag to avoid double-starting.
+#
+# WARNING: when using gunicorn, pass --workers 1 so only one scheduler runs.
+# Scale via --threads instead. Multiple workers = duplicate schedule runs.
+if os.environ.get("MARSAD_AUTOSTART_SCHEDULER", "1") != "0":
+    try:
+        start_scheduler()
+    except Exception as _e:
+        print(f"[scheduler] auto-start failed: {_e}")
+
+
 # ======================================================================
 #  Static files
 # ======================================================================
@@ -1105,6 +1118,17 @@ def start_scheduler():
 @app.route("/")
 def index():
     return send_from_directory(str(WEB_DIR), "index.html")
+
+
+@app.route("/healthz")
+def healthz():
+    """Health check endpoint for reverse proxy / monitoring."""
+    ok, msg = db.test_connection()
+    return jsonify({
+        "ok": bool(ok),
+        "db": msg,
+        "scheduler": bool(SCHEDULER_STATE.get("running")),
+    }), (200 if ok else 503)
 
 
 # ======================================================================

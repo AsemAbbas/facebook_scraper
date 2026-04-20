@@ -1,0 +1,52 @@
+[Unit]
+Description=Marsad — Facebook Pages Monitor
+Documentation=https://github.com/AsemAbbas/facebook_scraper
+After=network-online.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marsad
+Group=marsad
+WorkingDirectory=/opt/marsad
+EnvironmentFile=/opt/marsad/.env
+Environment="PATH=/opt/marsad/venv/bin"
+Environment="NO_BROWSER=1"
+Environment="HOST=127.0.0.1"
+Environment="PORT=5050"
+Environment="PYTHONIOENCODING=utf-8"
+Environment="PYTHONUNBUFFERED=1"
+
+# Use gunicorn with a SINGLE worker + threads. The built-in scheduler lives
+# in-process; multiple workers would schedule the same job N times.
+# Threads (16) give us concurrency without the duplication problem.
+# --worker-class gthread is required for long-lived SSE streams.
+ExecStart=/opt/marsad/venv/bin/gunicorn \
+    --workers 1 \
+    --threads 16 \
+    --worker-class gthread \
+    --bind 127.0.0.1:5050 \
+    --timeout 600 \
+    --graceful-timeout 30 \
+    --keep-alive 30 \
+    --access-logfile - \
+    --error-logfile - \
+    server:app
+
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/marsad/database /opt/marsad/logs
+
+StandardOutput=append:/var/log/marsad/marsad.log
+StandardError=append:/var/log/marsad/marsad.log
+
+[Install]
+WantedBy=multi-user.target

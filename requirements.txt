@@ -21,6 +21,11 @@ requests>=2.31.0       # sync requests للـ Telegram + health checks
 # ملاحظة: في cPanel استخدم Apify/FetchRSS/RSS.app بدل Playwright
 playwright>=1.40.0
 
+# Production WSGI (للنشر على VPS)
+# استخدمه مع: gunicorn --workers 1 --threads 8 'server:app'
+# لاحظ: --workers 1 ضروري لأن الجدولة (scheduler) تعمل في خيط داخلي واحد
+gunicorn>=21.2.0
+
 # Telegram (اختياري)
 # requests موجود فوق
 
