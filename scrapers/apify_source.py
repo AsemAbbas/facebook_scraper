@@ -133,15 +133,30 @@ class ApifySource(BaseScraper):
         if self.is_curious_coder:
             # curious_coder/facebook-post-scraper input schema
             # https://apify.com/curious_coder/facebook-post-scraper/input-schema
+            #
+            # Required: urls (array of strings)
+            # Optional: count, outputFormat, sortType, scrapePhotos, cookie,
+            #           minDelay (>=1), maxDelay (>=10), scrapeUntil, proxy
+            #
+            # ملاحظة: الـ actor بيفرض maxDelay>=10 ثواني (rate-limit protection)
+            # ومنه ما نحدد minDelay/maxDelay بنفسنا — نخليها على الـ defaults
+            # (1 و 10) إلا إذا المستخدم override من config.
             input_data = {
                 "urls": [page_url],           # array of strings
                 "count": max_posts,           # not resultsLimit
                 "outputFormat": "simple",     # flat structure - أسهل للمعالجة
                 "sortType": "new_posts",      # الأحدث أولاً
                 "scrapePhotos": False,        # يزيد التكلفة وعدنا ميديا من attachments
-                "minDelay": 1,
-                "maxDelay": 5,
             }
+
+            # override اختياري من config
+            user_min = self.config.get("min_delay")
+            user_max = self.config.get("max_delay")
+            if isinstance(user_min, int) and user_min >= 1:
+                input_data["minDelay"] = user_min
+            if isinstance(user_max, int) and user_max >= 10:
+                input_data["maxDelay"] = user_max
+
             if date_from:
                 input_data["scrapeUntil"] = date_from
             # cookie/proxy اختيارية — يتركها فاضية افتراضياً
