@@ -17,13 +17,14 @@
 sources:
 
   # 💎 Apify - الأفضل جودة ($49/شهر - Starter plan)
-  # https://apify.com/apify/facebook-posts-scraper
-  # ✅ تفاعلات دقيقة + تعليقات + بدون مخاطر
+  # https://apify.com/curious_coder/facebook-post-scraper
+  # ✅ تفاعلات دقيقة + تعليقات + يدعم pages/groups/profiles/search
+  # 💰 ~$5 لكل 1000 منشور (أرخص من الـ official actor)
   - name: apify
     enabled: false
     priority: 1
     token: ${APIFY_TOKEN}
-    actor_id: "apify/facebook-posts-scraper"
+    actor_id: "curious_coder/facebook-post-scraper"
     timeout_seconds: 600
     max_retries: 2
     # خيارات متقدمة (Apify فقط)

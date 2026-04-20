@@ -332,7 +332,9 @@ DEFAULT_SOURCES = [
         "enabled": 0,
         "priority": 1,
         "config": {
-            "actor_id": "apify/facebook-posts-scraper",
+            # Actor الافتراضي: curious_coder/facebook-post-scraper (أحدث + أرخص)
+            # للقديم استخدم: "apify/facebook-posts-scraper"
+            "actor_id": "curious_coder/facebook-post-scraper",
             "include_comments": True,
             "max_comments_per_post": 10,
             "include_reactions_breakdown": True,

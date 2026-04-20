@@ -1,16 +1,19 @@
 """
 Apify Source
 ============
-يشغّل Apify Actor (facebook-posts-scraper) عبر REST API ويسحب النتائج.
-https://apify.com/apify/facebook-posts-scraper
+يشغّل Apify Actor عبر REST API ويسحب النتائج.
 
-✅ أفضل جودة: residential proxies + تفاعلات + تعليقات
-💰 Starter plan: $49/شهر
-🆓 Free trial: $5 credits شهرياً
+المصدر الافتراضي: https://apify.com/curious_coder/facebook-post-scraper
+✅ جودة ممتازة + يدعم pages/groups/search/profiles
+💰 ~$5 per 1000 posts
+🆓 Free trial: $5 credits شهرياً من Apify
+
+يدعم أيضاً apify/facebook-posts-scraper (بـ input schema مختلف)
+الكود يكتشف الـ schema المناسب حسب الـ actor_id.
 
 طريقة العمل:
-  1. المستخدم ينشئ حساب Apify
-  2. يحفظ APIFY_TOKEN كـ GitHub Secret
+  1. المستخدم ينشئ حساب Apify ويأخذ token
+  2. يضع Apify token في إعدادات المصدر من الواجهة
   3. هذا الـ adapter يشغّل الـ Actor + ينتظر النتيجة + يحوّلها
 """
 
@@ -27,6 +30,9 @@ from .normalizer import PostNormalizer as N
 
 APIFY_BASE = "https://api.apify.com/v2"
 
+# الافتراضي: curious_coder/facebook-post-scraper (أحدث + أرخص + يدعم groups + profiles)
+DEFAULT_ACTOR_ID = "curious_coder/facebook-post-scraper"
+
 
 class ApifySource(BaseScraper):
     """تشغيل Apify Actor عبر API"""
@@ -36,12 +42,16 @@ class ApifySource(BaseScraper):
     def __init__(self, config: dict):
         super().__init__(config)
         self.token = config.get("token", "")
-        self.actor_id = config.get("actor_id", "apify/facebook-posts-scraper")
+        self.actor_id = config.get("actor_id") or DEFAULT_ACTOR_ID
         self.timeout_seconds = config.get("timeout_seconds", 600)
         self.max_retries = config.get("max_retries", 2)
 
         # Apify يستبدل / بـ ~ في الـ URL
         self.actor_id_url = self.actor_id.replace("/", "~")
+
+        # curious_coder و apify/facebook-posts-scraper يستعملان input schema مختلف.
+        # نميّز بحسب الـ actor_id ونولّد الـ input المناسب.
+        self.is_curious_coder = self.actor_id.startswith("curious_coder/")
 
         self.headers = {
             "Authorization": f"Bearer {self.token}",
@@ -120,27 +130,43 @@ class ApifySource(BaseScraper):
         include_comments = self.config.get("include_comments", True)
         include_reactions_breakdown = self.config.get("include_reactions_breakdown", True)
 
-        input_data = {
-            "startUrls": [{"url": page_url}],
-            "resultsLimit": max_posts,
-            "proxyConfiguration": {
-                "useApifyProxy": True,
-                "apifyProxyGroups": ["RESIDENTIAL"],
-            },
-        }
-
-        if include_comments and max_comments > 0:
-            input_data["commentsLimit"] = max_comments
-
-        if include_reactions_breakdown:
-            input_data["likedBy"] = False  # نريد العدد فقط، مش الأسماء
-            input_data["reactions"] = True
-
-        # Apify's FB scraper يدعم onlyPostsNewerThan/onlyPostsOlderThan
-        if date_from:
-            input_data["onlyPostsNewerThan"] = date_from
-        if date_to:
-            input_data["onlyPostsOlderThan"] = date_to
+        if self.is_curious_coder:
+            # curious_coder/facebook-post-scraper input schema
+            # https://apify.com/curious_coder/facebook-post-scraper/input-schema
+            input_data = {
+                "urls": [page_url],           # array of strings
+                "count": max_posts,           # not resultsLimit
+                "outputFormat": "simple",     # flat structure - أسهل للمعالجة
+                "sortType": "new_posts",      # الأحدث أولاً
+                "scrapePhotos": False,        # يزيد التكلفة وعدنا ميديا من attachments
+                "minDelay": 1,
+                "maxDelay": 5,
+            }
+            if date_from:
+                input_data["scrapeUntil"] = date_from
+            # cookie/proxy اختيارية — يتركها فاضية افتراضياً
+            cookie_val = self.config.get("cookie")
+            if cookie_val:
+                input_data["cookie"] = cookie_val
+        else:
+            # apify/facebook-posts-scraper legacy schema
+            input_data = {
+                "startUrls": [{"url": page_url}],
+                "resultsLimit": max_posts,
+                "proxyConfiguration": {
+                    "useApifyProxy": True,
+                    "apifyProxyGroups": ["RESIDENTIAL"],
+                },
+            }
+            if include_comments and max_comments > 0:
+                input_data["commentsLimit"] = max_comments
+            if include_reactions_breakdown:
+                input_data["likedBy"] = False
+                input_data["reactions"] = True
+            if date_from:
+                input_data["onlyPostsNewerThan"] = date_from
+            if date_to:
+                input_data["onlyPostsOlderThan"] = date_to
 
         url = f"{APIFY_BASE}/acts/{self.actor_id_url}/runs"
 
@@ -156,7 +182,7 @@ class ApifySource(BaseScraper):
                 if r.status != 201:
                     body = await r.text()
                     raise SourceUnavailableError(
-                        f"[apify] فشل تشغيل actor: HTTP {r.status} - {body[:200]}"
+                        f"[apify] فشل تشغيل actor {self.actor_id}: HTTP {r.status} - {body[:200]}"
                     )
                 data = await r.json()
                 return data["data"]["id"]
@@ -226,106 +252,183 @@ class ApifySource(BaseScraper):
         page_name: str,
         page_url: str,
     ) -> UnifiedPost | None:
-        """تحويل Apify item إلى UnifiedPost"""
-        text = item.get("text") or item.get("message") or item.get("caption") or ""
+        """
+        تحويل Apify item إلى UnifiedPost.
+        يدعم كلا schema:
+          - curious_coder/facebook-post-scraper: text, createdAt, reactionCount,
+            commentCount, shareCount, user.{id,name,url}, attachments, topComments
+          - apify/facebook-posts-scraper: message/text, time/timestamp, likes,
+            comments, media, commentsData
+        """
+        # النص
+        text = (
+            item.get("text")
+            or item.get("message")
+            or item.get("caption")
+            or item.get("content")
+            or ""
+        )
         text = N.clean_text(text)
 
         if not text or len(text) < 5:
             return None
 
+        # المعرّف
         post_id = str(
             item.get("postId")
             or item.get("id")
             or item.get("post_id")
-            or N.extract_post_id(item.get("url", ""))
+            or item.get("facebookId")
+            or N.extract_post_id(item.get("url", "") or item.get("postUrl", ""))
             or self.make_post_id("", text)
         )
 
-        post_url = item.get("url") or item.get("postUrl") or ""
+        # الرابط
+        post_url = item.get("url") or item.get("postUrl") or item.get("link") or ""
         post_url = N.normalize_fb_url(post_url)
 
-        # كل الميديا
+        # الميديا — attachments (curious_coder) أو media (apify/official)
         media_items: list[dict] = []
-        raw_media = item.get("media") or []
+        raw_media = item.get("attachments") or item.get("media") or []
         if isinstance(raw_media, list):
             for m in raw_media:
+                if isinstance(m, str):
+                    # curious_coder attachments ممكن يكونوا strings (روابط مباشرة)
+                    if m.startswith("http"):
+                        media_items.append({
+                            "type": "video" if any(ext in m.lower() for ext in (".mp4", ".mov", ".webm")) else "image",
+                            "url": m,
+                            "thumbnail": m,
+                            "width": 0, "height": 0, "duration_seconds": 0,
+                        })
+                    continue
                 if not isinstance(m, dict):
                     continue
                 media_url = (
-                    m.get("photo_image", {}).get("uri")
-                    or m.get("url")
-                    or m.get("thumbnail")
-                    or ""
-                )
+                    m.get("photo_image", {}).get("uri") if isinstance(m.get("photo_image"), dict) else None
+                ) or m.get("url") or m.get("src") or m.get("image") or m.get("thumbnail") or ""
                 if not media_url:
                     continue
-                m_type = "video" if (m.get("video_url") or m.get("playable_url")) else "image"
-                actual_url = m.get("video_url") or m.get("playable_url") or media_url
+                video_candidate = (
+                    m.get("video_url") or m.get("playable_url") or m.get("videoUrl")
+                )
+                m_type = m.get("type") or ("video" if video_candidate else "image")
+                actual_url = video_candidate or media_url
                 media_items.append({
                     "type": m_type,
                     "url": actual_url,
-                    "thumbnail": m.get("thumbnail") or media_url,
+                    "thumbnail": m.get("thumbnail") or m.get("thumbnailUrl") or media_url,
                     "width": int(m.get("width") or 0),
                     "height": int(m.get("height") or 0),
-                    "duration_seconds": int(m.get("duration") or 0),
+                    "duration_seconds": int(m.get("duration") or m.get("durationSeconds") or 0),
                 })
 
         image_url = next((m["url"] for m in media_items if m["type"] == "image"), "")
         if not image_url:
-            image_url = item.get("imageUrl") or item.get("image") or ""
+            image_url = item.get("imageUrl") or item.get("image") or item.get("thumbnail") or ""
 
         video_url = next((m["url"] for m in media_items if m["type"] == "video"), "")
 
-        # التفاعلات
+        # التفاعلات — curious_coder يستخدم reactionCount/commentCount/shareCount
         reactions = N.parse_engagement(
-            item.get("likes")
+            item.get("reactionCount")
+            or item.get("reactionsCount")
+            or item.get("likes")
             or item.get("reactions")
             or item.get("likesCount")
-            or item.get("reactionsCount")
+            or 0
         )
-        comments = N.parse_engagement(item.get("comments") or item.get("commentsCount") or 0)
-        shares = N.parse_engagement(item.get("shares") or item.get("sharesCount") or 0)
+        comments = N.parse_engagement(
+            item.get("commentCount")
+            or item.get("commentsCount")
+            or item.get("comments")
+            or 0
+        )
+        shares = N.parse_engagement(
+            item.get("shareCount")
+            or item.get("sharesCount")
+            or item.get("shares")
+            or 0
+        )
 
-        # تفاصيل التفاعلات
+        # تفاصيل التفاعلات (إن وُجدت)
         reactions_breakdown = {}
-        rb = item.get("reactionsBreakdown") or item.get("reactions_breakdown") or {}
+        rb = (
+            item.get("reactionsBreakdown")
+            or item.get("reactions_breakdown")
+            or item.get("reactionDistribution")
+            or {}
+        )
         if isinstance(rb, dict):
             for k in ("like", "love", "haha", "wow", "sad", "angry", "care"):
                 if k in rb:
                     reactions_breakdown[k] = int(rb[k] or 0)
 
-        # التعليقات
+        # التعليقات — curious_coder يستخدم topComments
         comments_data: list[dict] = []
-        raw_comments = item.get("commentsData") or item.get("comments_data") or []
+        raw_comments = (
+            item.get("topComments")
+            or item.get("commentsData")
+            or item.get("comments_data")
+            or []
+        )
         if isinstance(raw_comments, list):
-            for c in raw_comments[:50]:  # أول 50 تعليق فقط
+            for c in raw_comments[:50]:
                 if not isinstance(c, dict):
                     continue
+                c_user = c.get("user") or c.get("author") or {}
                 comments_data.append({
                     "comment_id": str(c.get("id") or c.get("commentId") or ""),
-                    "author_name": str(c.get("authorName") or c.get("name") or ""),
-                    "author_url": str(c.get("authorUrl") or c.get("profileUrl") or ""),
-                    "text": N.clean_text(c.get("text") or c.get("message") or ""),
-                    "created_at": N.parse_iso_date(c.get("date") or c.get("created_time")),
-                    "likes": int(c.get("likesCount") or c.get("likes") or 0),
-                    "replies_count": int(c.get("repliesCount") or 0),
+                    "author_name": str(
+                        (c_user.get("name") if isinstance(c_user, dict) else "")
+                        or c.get("authorName")
+                        or c.get("name")
+                        or ""
+                    ),
+                    "author_url": str(
+                        (c_user.get("url") if isinstance(c_user, dict) else "")
+                        or c.get("authorUrl")
+                        or c.get("profileUrl")
+                        or ""
+                    ),
+                    "text": N.clean_text(c.get("text") or c.get("message") or c.get("body") or ""),
+                    "created_at": N.parse_iso_date(
+                        c.get("createdAt") or c.get("date") or c.get("created_time")
+                    ),
+                    "likes": int(c.get("reactionCount") or c.get("likesCount") or c.get("likes") or 0),
+                    "replies_count": int(c.get("repliesCount") or c.get("replyCount") or 0),
                 })
 
-        # التاريخ
-        published_at = N.parse_iso_date(
-            item.get("time")
+        # التاريخ — curious_coder يستخدم createdAt كـ unix timestamp
+        raw_date = (
+            item.get("createdAt")
+            or item.get("created_at")
+            or item.get("time")
             or item.get("timestamp")
             or item.get("publishedAt")
             or item.get("created_time")
         )
+        if isinstance(raw_date, (int, float)):
+            # Unix timestamp → ISO
+            from datetime import datetime, timezone
+            try:
+                ts = float(raw_date)
+                # إذا كان بالـ milliseconds (13 digit) حوّله
+                if ts > 1e12:
+                    ts /= 1000
+                published_at = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+            except Exception:
+                published_at = ""
+        else:
+            published_at = N.parse_iso_date(raw_date) if raw_date else ""
 
-        # الكاتب
+        # الكاتب — curious_coder يضع في user.{name,url,id}
         author_name = page_name
         author_url = page_url
-        author_obj = item.get("user") or item.get("author") or {}
+        author_obj = item.get("user") or item.get("author") or item.get("owner") or {}
         if isinstance(author_obj, dict):
-            author_name = author_obj.get("name") or page_name
-            author_url = author_obj.get("url") or page_url
+            author_name = author_obj.get("name") or author_obj.get("fullName") or page_name
+            author_url = author_obj.get("url") or author_obj.get("profileUrl") or page_url
 
         # روابط خارجية
         external_links = []
