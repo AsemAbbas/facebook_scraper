@@ -263,6 +263,26 @@ def api_post_delete(post_id):
     return jsonify({"ok": ok})
 
 
+@app.route("/api/posts/<int:post_id>/raw", methods=["GET"])
+@login_required
+def api_post_raw(post_id):
+    """يرجع raw_json لمنشور - للاستخدام في debug (إظهار ما سحبه المصدر فعلياً)"""
+    with db.db_cursor() as cur:
+        cur.execute(
+            "SELECT raw_json FROM posts WHERE id=%s AND user_id=%s",
+            (post_id, current_user.id)
+        )
+        row = cur.fetchone()
+    if not row:
+        return jsonify({"error": "المنشور غير موجود"}), 404
+    raw = row.get("raw_json") if isinstance(row, dict) else row[0]
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except Exception:
+        parsed = {"_raw_text": raw or ""}
+    return jsonify(parsed)
+
+
 @app.route("/api/posts/bulk-delete", methods=["POST"])
 @login_required
 def api_posts_bulk_delete():

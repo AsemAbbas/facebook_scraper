@@ -654,6 +654,7 @@ function applyFilters() {
   }
 
   saveFilters();
+  updateStats();   // refresh the top stat cards to reflect the filtered subset
   renderPosts();
 }
 
@@ -748,12 +749,22 @@ function renderPosts() {
     const isHigh = reactions >= 1000;
     const hasEngagement = reactions || comments || shares;
     const sourceBadge = renderSourceBadge(post.source);
-    const imageHtml = post.image_url
-      ? `<div class="post-image"><img src="${escapeHtml(post.image_url)}" alt="" loading="lazy" onerror="this.parentElement.remove()"></div>`
+    const media = Array.isArray(post.media) ? post.media : [];
+    const mediaCount = media.length;
+    const primaryImage = post.image_url
+      || (media.find(m => m.type === 'image') || {}).url
+      || (media.find(m => m.type !== 'video') || {}).thumbnail
+      || '';
+    const hasVideo = !!post.video_url || media.some(m => m.type === 'video');
+    const imageHtml = primaryImage
+      ? `<div class="post-image ${hasVideo ? 'has-video' : ''}">
+           <img src="${escapeHtml(primaryImage)}" alt="" loading="lazy" onerror="this.parentElement.remove()">
+           ${hasVideo ? '<span class="play-overlay" aria-hidden="true"></span>' : ''}
+           ${mediaCount > 1 ? `<span class="media-count-chip">+${mediaCount - 1}</span>` : ''}
+         </div>`
       : '';
     const typeIcon = postTypeIcon(post.post_type);
     const hasComments = (post.comments_data || []).length > 0;
-    const mediaCount = (post.media || []).length;
 
     return `
       <article class="post-card clickable" data-post-id="${escapeHtml(post.post_id)}" data-post-slug="${escapeHtml(post.page_slug)}" data-post-internal="${post.id || ''}" style="animation-delay: ${Math.min(i * 30, 600)}ms">
@@ -767,7 +778,7 @@ function renderPosts() {
         </div>
         ${imageHtml}
         <div class="post-text">${escapeHtml(post.text || '')}</div>
-        ${mediaCount > 1 ? `<div class="post-media-count">+${mediaCount - 1} ملف ميديا</div>` : ''}
+        ${mediaCount > 1 && !primaryImage ? `<div class="post-media-count">${mediaCount} ملف ميديا</div>` : ''}
         <div class="post-engagement">
           ${hasEngagement ? `
             <div class="engagement-item ${isHigh ? 'high' : ''}" title="تفاعلات">
@@ -870,12 +881,31 @@ function showEmpty(msg) {
 }
 
 function updateStats() {
-  const totalReactions = STATE.allPosts.reduce((s, p) => s + (p.reactions || 0), 0);
-  const totalComments  = STATE.allPosts.reduce((s, p) => s + (p.comments || 0), 0);
-  if (els.statPages) els.statPages.textContent = Object.keys(STATE.pages).length;
-  if (els.statPosts) els.statPosts.textContent = formatNum(STATE.allPosts.length);
+  // Use the filtered collection when any filter is active so the stats reflect
+  // what the user is actually looking at. Falls back to all posts otherwise.
+  const posts = Array.isArray(STATE.filtered) && STATE.filtered.length !== STATE.allPosts.length
+    ? STATE.filtered
+    : STATE.allPosts;
+
+  const isFiltered = posts !== STATE.allPosts;
+
+  // Count distinct pages within the viewed set
+  const pageSlugs = new Set();
+  let totalReactions = 0;
+  let totalComments = 0;
+  for (const p of posts) {
+    if (p.page_slug) pageSlugs.add(p.page_slug);
+    totalReactions += p.reactions || 0;
+    totalComments += p.comments || 0;
+  }
+
+  if (els.statPages) els.statPages.textContent = pageSlugs.size || Object.keys(STATE.pages).length;
+  if (els.statPosts) els.statPosts.textContent = formatNum(posts.length);
   if (els.statReactions) els.statReactions.textContent = formatNum(totalReactions);
   if (els.statComments) els.statComments.textContent = formatNum(totalComments);
+
+  // Visual cue that stats reflect a filtered subset
+  document.querySelectorAll('.stats-bar .stat').forEach(el => el.classList.toggle('is-filtered', isFiltered));
 
   const sources = STATE.index?.sources_used || [];
   if (els.sourcesUsed) {
@@ -2038,6 +2068,12 @@ function openPostDetailModal(post) {
           <div><span>النوع:</span> <code>${escapeHtml(post.post_type || 'text')}</code></div>
           <div><span>سُحب في:</span> <code>${formatTime('', post.scraped_at)}</code></div>
         </div>
+        ${post.id ? `
+          <button type="button" class="btn-refresh btn-sm view-raw-btn" data-post-id="${post.id}" style="margin-top:8px">
+            🔬 عرض raw JSON من المصدر
+          </button>
+          <pre class="raw-json-view" hidden></pre>
+        ` : ''}
       </details>
     </div>
   `, 'lg');
@@ -2057,6 +2093,30 @@ function openPostDetailModal(post) {
     navigator.clipboard.writeText(post.text || '');
     showToast('تم نسخ النص', 'success');
   });
+
+  // Raw JSON viewer (for debugging what the source actually returned)
+  const rawBtn = document.querySelector('.view-raw-btn');
+  if (rawBtn) {
+    rawBtn.addEventListener('click', async () => {
+      const pid = rawBtn.dataset.postId;
+      const pane = rawBtn.nextElementSibling;
+      if (!pane || !pid) return;
+      if (!pane.hidden) { pane.hidden = true; return; }
+      rawBtn.disabled = true;
+      rawBtn.textContent = '⏳ جاري التحميل...';
+      try {
+        const res = await fetch(`/api/posts/${pid}/raw`, { credentials: 'include' });
+        if (!res.ok) throw new Error('فشل تحميل البيانات الأصلية');
+        const data = await res.json();
+        pane.textContent = JSON.stringify(data, null, 2);
+        pane.hidden = false;
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+      rawBtn.disabled = false;
+      rawBtn.textContent = '🔬 عرض raw JSON من المصدر';
+    });
+  }
 }
 
 function reactionIcon(key) {

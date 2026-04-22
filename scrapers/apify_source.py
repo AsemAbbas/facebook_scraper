@@ -302,41 +302,111 @@ class ApifySource(BaseScraper):
         post_url = item.get("url") or item.get("postUrl") or item.get("link") or ""
         post_url = N.normalize_fb_url(post_url)
 
-        # الميديا — attachments (curious_coder) أو media (apify/official)
+        # الميديا — المصادر محتملة:
+        #   curious_coder/simple: attachments (list of objects with 'media', 'type', 'url', 'thumbnail')
+        #   curious_coder/raw: nested deep structure
+        #   apify/official: media (list of objects)
+        #   fallbacks: single image_url / video_url / photos / videos
         media_items: list[dict] = []
-        raw_media = item.get("attachments") or item.get("media") or []
-        if isinstance(raw_media, list):
-            for m in raw_media:
+        _seen_urls: set[str] = set()
+
+        def _add_media(url: str, m_type: str = "", thumbnail: str = "",
+                       width: int = 0, height: int = 0, duration: int = 0):
+            """إضافة ميديا مع فحص التكرار وصحة الـ URL"""
+            if not url or not isinstance(url, str):
+                return
+            if not url.startswith(("http://", "https://", "//")):
+                return
+            if url in _seen_urls:
+                return
+            _seen_urls.add(url)
+            # auto-detect type from URL extension + domain hints
+            low = url.lower()
+            if any(ext in low for ext in (".mp4", ".mov", ".webm", ".m4v", ".mkv")):
+                m_type = "video"
+            elif "video" in low and not m_type:
+                # fbcdn/video.xx.fbcdn.net → video
+                m_type = "video"
+            elif any(ext in low for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp")):
+                m_type = m_type or "image"
+            if not m_type:
+                m_type = "image"
+            media_items.append({
+                "type": m_type,
+                "url": url,
+                "thumbnail": thumbnail or url,
+                "width": int(width or 0),
+                "height": int(height or 0),
+                "duration_seconds": int(duration or 0),
+            })
+
+        def _extract_from_dict(m: dict):
+            """حاول تستخرج url/type من dict بأكثر شكل ممكن"""
+            if not isinstance(m, dict):
+                return
+            # nested photo_image: {uri: "..."}
+            pi = m.get("photo_image")
+            if isinstance(pi, dict):
+                _add_media(pi.get("uri") or "", "image",
+                          thumbnail=pi.get("uri") or "",
+                          width=pi.get("width"), height=pi.get("height"))
+            # video nested
+            vid = m.get("video") or m.get("video_url") or m.get("playable_url")
+            if isinstance(vid, dict):
+                _add_media(vid.get("url") or vid.get("src") or "", "video",
+                          thumbnail=m.get("thumbnail") or "",
+                          duration=vid.get("duration") or m.get("duration"))
+            elif isinstance(vid, str):
+                _add_media(vid, "video", thumbnail=m.get("thumbnail") or "")
+
+            # Generic url fields
+            explicit_type = (m.get("type") or m.get("mediaType") or "").lower()
+            t_hint = ""
+            if any(k in explicit_type for k in ("video", "clip")):
+                t_hint = "video"
+            elif any(k in explicit_type for k in ("photo", "image", "gif")):
+                t_hint = "image"
+            elif any(k in explicit_type for k in ("link", "external")):
+                t_hint = "external_link"
+
+            for key in ("url", "src", "image", "media", "uri", "large_image", "largeImage",
+                       "source_url", "sourceUrl", "original_url", "originalUrl"):
+                val = m.get(key)
+                if isinstance(val, dict):
+                    # nested — recurse shallowly
+                    url2 = val.get("url") or val.get("src") or val.get("uri") or ""
+                    if url2:
+                        _add_media(url2, t_hint,
+                                  thumbnail=val.get("thumbnail") or val.get("thumbnailUrl") or "",
+                                  width=val.get("width"), height=val.get("height"))
+                elif isinstance(val, str) and val.startswith(("http", "//")):
+                    _add_media(val, t_hint,
+                              thumbnail=m.get("thumbnail") or m.get("thumbnailUrl") or "",
+                              width=m.get("width"), height=m.get("height"),
+                              duration=m.get("duration") or m.get("durationSeconds"))
+            # thumbnail as standalone
+            thumb = m.get("thumbnail") or m.get("thumbnailUrl")
+            if isinstance(thumb, str) and not media_items:
+                _add_media(thumb, t_hint or "image")
+
+        # attachments / media / photos / videos arrays
+        for key in ("attachments", "media", "photos", "videos", "images", "mediaItems"):
+            raw = item.get(key)
+            if not isinstance(raw, list):
+                continue
+            for m in raw:
                 if isinstance(m, str):
-                    # curious_coder attachments ممكن يكونوا strings (روابط مباشرة)
-                    if m.startswith("http"):
-                        media_items.append({
-                            "type": "video" if any(ext in m.lower() for ext in (".mp4", ".mov", ".webm")) else "image",
-                            "url": m,
-                            "thumbnail": m,
-                            "width": 0, "height": 0, "duration_seconds": 0,
-                        })
-                    continue
-                if not isinstance(m, dict):
-                    continue
-                media_url = (
-                    m.get("photo_image", {}).get("uri") if isinstance(m.get("photo_image"), dict) else None
-                ) or m.get("url") or m.get("src") or m.get("image") or m.get("thumbnail") or ""
-                if not media_url:
-                    continue
-                video_candidate = (
-                    m.get("video_url") or m.get("playable_url") or m.get("videoUrl")
-                )
-                m_type = m.get("type") or ("video" if video_candidate else "image")
-                actual_url = video_candidate or media_url
-                media_items.append({
-                    "type": m_type,
-                    "url": actual_url,
-                    "thumbnail": m.get("thumbnail") or m.get("thumbnailUrl") or media_url,
-                    "width": int(m.get("width") or 0),
-                    "height": int(m.get("height") or 0),
-                    "duration_seconds": int(m.get("duration") or m.get("durationSeconds") or 0),
-                })
+                    _add_media(m)
+                elif isinstance(m, dict):
+                    _extract_from_dict(m)
+
+        # Standalone single URLs as fallback
+        for key, hint in (("imageUrl", "image"), ("image", "image"),
+                          ("videoUrl", "video"), ("videoSource", "video"),
+                          ("thumbnail", "image")):
+            val = item.get(key)
+            if isinstance(val, str):
+                _add_media(val, hint)
 
         image_url = next((m["url"] for m in media_items if m["type"] == "image"), "")
         if not image_url:
