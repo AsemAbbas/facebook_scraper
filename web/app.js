@@ -3039,18 +3039,16 @@ function renderSourceCard(s, priorityIndex) {
 }
 
 function renderApifyExtraConfig(s) {
-  const cfg = s.config || {};
-  const currentActor = cfg.actor_id || 'curious_coder/facebook-post-scraper';
   return `
     <div class="form-field source-extra-config">
       <label>Actor ID</label>
-      <div class="token-input-row">
-        <input type="text" class="input source-actor-input" value="${escapeHtml(currentActor)}" dir="ltr" placeholder="curious_coder/facebook-post-scraper">
-        <button class="btn-trigger btn-sm source-save-actor" type="button">حفظ</button>
+      <div class="locked-value">
+        <span class="lock-icon">🔒</span>
+        <code>curious_coder/facebook-post-scraper</code>
       </div>
       <span class="field-help">
-        الافتراضي: <code>curious_coder/facebook-post-scraper</code> (أحدث + أرخص + يدعم groups).
-        البديل: <code>apify/facebook-posts-scraper</code>.
+        الـ actor مقفول على <code>curious_coder/facebook-post-scraper</code> ولا يمكن تغييره.
+        <a href="https://apify.com/curious_coder/facebook-post-scraper" target="_blank" rel="noopener">صفحة الـ Actor على Apify ↗</a>
       </span>
     </div>
   `;
@@ -3117,45 +3115,7 @@ function bindSourceCards() {
     });
   });
 
-  // === Save Apify actor_id ===
-  list.querySelectorAll('.source-save-actor').forEach(saveBtn => {
-    saveBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const card = saveBtn.closest('.source-config-card');
-      const sourceName = card.dataset.source;
-      const input = card.querySelector('.source-actor-input');
-      const actorId = input.value.trim();
-      if (!actorId || !actorId.includes('/')) {
-        showToast('Actor ID غير صالح (مثال: curious_coder/facebook-post-scraper)', 'error');
-        return;
-      }
-      saveBtn.disabled = true;
-      saveBtn.textContent = '⏳';
-      try {
-        // Get the existing config first to preserve other fields
-        const src = (STATE.sourcesStatus || []).find(s => s.source_name === sourceName);
-        const existingConfig = (src && src.config) || {};
-        const newConfig = { ...existingConfig, actor_id: actorId };
-
-        const res = await fetch(`/api/sources/${sourceName}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ config: newConfig }),
-        });
-        if (res.ok) {
-          showToast('✅ تم حفظ Actor ID', 'success');
-          if (src) src.config = newConfig;
-        } else {
-          showToast('فشل الحفظ', 'error');
-        }
-      } catch (err) {
-        showToast('خطأ: ' + err.message, 'error');
-      }
-      saveBtn.disabled = false;
-      saveBtn.textContent = 'حفظ';
-    });
-  });
+  // Apify actor_id مقفول في الكود - لا يمكن تغييره من الـ UI
 
   // === Collapse/Expand toggle ===
   list.querySelectorAll('.source-config-card').forEach(card => {

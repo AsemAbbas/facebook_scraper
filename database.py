@@ -332,8 +332,8 @@ DEFAULT_SOURCES = [
         "enabled": 0,
         "priority": 1,
         "config": {
-            # Actor الافتراضي: curious_coder/facebook-post-scraper (أحدث + أرخص)
-            # للقديم استخدم: "apify/facebook-posts-scraper"
+            # 🔒 Actor مقفول في الكود - أي قيمة هنا تُتجاهل
+            # انظر scrapers/apify_source.py → LOCKED_ACTOR_ID
             "actor_id": "curious_coder/facebook-post-scraper",
             "include_comments": True,
             "max_comments_per_post": 10,
@@ -364,11 +364,46 @@ DEFAULT_SOURCES = [
 
 
 def init_db() -> None:
-    """إنشاء الجداول"""
+    """إنشاء الجداول + migrations on-boot"""
     _ensure_pymysql()
     with db_cursor() as cur:
         for stmt in SCHEMA_STATEMENTS:
             cur.execute(stmt)
+
+    # Migration: force apify actor to the locked one (curious_coder/facebook-post-scraper)
+    # هذا يُطبَّق على أي row قديم كان فيه actor_id مختلف
+    try:
+        _force_apify_actor_lock()
+    except Exception as e:
+        print(f"[db] apify actor lock migration skipped: {e}")
+
+
+def _force_apify_actor_lock() -> None:
+    """
+    يضمن أن كل users لديهم config_json فيه
+    actor_id = 'curious_coder/facebook-post-scraper'.
+    """
+    LOCKED = "curious_coder/facebook-post-scraper"
+    with db_cursor() as cur:
+        cur.execute("SELECT user_id, config_json FROM source_settings WHERE source_name='apify'")
+        rows = cur.fetchall() or []
+        changed = 0
+        for r in rows:
+            uid = r["user_id"] if isinstance(r, dict) else r[0]
+            raw = (r["config_json"] if isinstance(r, dict) else r[1]) or "{}"
+            try:
+                cfg = json.loads(raw)
+            except Exception:
+                cfg = {}
+            if cfg.get("actor_id") != LOCKED:
+                cfg["actor_id"] = LOCKED
+                cur.execute(
+                    "UPDATE source_settings SET config_json=%s WHERE user_id=%s AND source_name='apify'",
+                    (json.dumps(cfg, ensure_ascii=False), uid)
+                )
+                changed += 1
+        if changed:
+            print(f"[db] forced apify actor_id='{LOCKED}' on {changed} row(s)")
 
 
 # ======================================================================

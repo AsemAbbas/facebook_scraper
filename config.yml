@@ -17,14 +17,16 @@
 sources:
 
   # 💎 Apify - الأفضل جودة ($49/شهر - Starter plan)
+  # 🔒 Apify actor مقفول في الكود على curious_coder/facebook-post-scraper
+  # أي قيمة أخرى لـ actor_id تُتجاهل من قبل الـ adapter.
   # https://apify.com/curious_coder/facebook-post-scraper
   # ✅ تفاعلات دقيقة + تعليقات + يدعم pages/groups/profiles/search
-  # 💰 ~$5 لكل 1000 منشور (أرخص من الـ official actor)
+  # 💰 ~$5 لكل 1000 منشور
   - name: apify
     enabled: false
     priority: 1
     token: ${APIFY_TOKEN}
-    actor_id: "curious_coder/facebook-post-scraper"
+    actor_id: "curious_coder/facebook-post-scraper"   # مقفول - لا تغيّره
     timeout_seconds: 600
     max_retries: 2
     # خيارات متقدمة (Apify فقط)

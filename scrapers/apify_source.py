@@ -3,13 +3,13 @@ Apify Source
 ============
 يشغّل Apify Actor عبر REST API ويسحب النتائج.
 
-المصدر الافتراضي: https://apify.com/curious_coder/facebook-post-scraper
+⚠️  مقفول على الـ actor: curious_coder/facebook-post-scraper حصرياً.
+    لا يُسمح بأي actor آخر — أي قيمة actor_id تُتجاهل وتُستبدل بهذه.
+    https://apify.com/curious_coder/facebook-post-scraper
+
 ✅ جودة ممتازة + يدعم pages/groups/search/profiles
 💰 ~$5 per 1000 posts
 🆓 Free trial: $5 credits شهرياً من Apify
-
-يدعم أيضاً apify/facebook-posts-scraper (بـ input schema مختلف)
-الكود يكتشف الـ schema المناسب حسب الـ actor_id.
 
 طريقة العمل:
   1. المستخدم ينشئ حساب Apify ويأخذ token
@@ -30,28 +30,30 @@ from .normalizer import PostNormalizer as N
 
 APIFY_BASE = "https://api.apify.com/v2"
 
-# الافتراضي: curious_coder/facebook-post-scraper (أحدث + أرخص + يدعم groups + profiles)
-DEFAULT_ACTOR_ID = "curious_coder/facebook-post-scraper"
+# ⚠️  HARDCODED — لا تغيّره وإلا الكود مش هيشتغل (الـ input schema مربوط بهذا الـ actor).
+# لو المستخدم حط قيمة ثانية في config، نتجاهلها ونسجّل warning.
+LOCKED_ACTOR_ID = "curious_coder/facebook-post-scraper"
 
 
 class ApifySource(BaseScraper):
-    """تشغيل Apify Actor عبر API"""
+    """تشغيل Apify Actor عبر API — مقفول على curious_coder/facebook-post-scraper"""
 
     source_name = "apify"
 
     def __init__(self, config: dict):
         super().__init__(config)
         self.token = config.get("token", "")
-        self.actor_id = config.get("actor_id") or DEFAULT_ACTOR_ID
+
+        # نتجاهل أي override للـ actor من الـ config - الكود مقفول على curious_coder
+        configured = config.get("actor_id")
+        if configured and configured != LOCKED_ACTOR_ID:
+            print(f"[apify] ⚠️  تم تجاهل actor_id='{configured}' — الكود مقفول على {LOCKED_ACTOR_ID}")
+        self.actor_id = LOCKED_ACTOR_ID
         self.timeout_seconds = config.get("timeout_seconds", 600)
         self.max_retries = config.get("max_retries", 2)
 
         # Apify يستبدل / بـ ~ في الـ URL
         self.actor_id_url = self.actor_id.replace("/", "~")
-
-        # curious_coder و apify/facebook-posts-scraper يستعملان input schema مختلف.
-        # نميّز بحسب الـ actor_id ونولّد الـ input المناسب.
-        self.is_curious_coder = self.actor_id.startswith("curious_coder/")
 
         self.headers = {
             "Authorization": f"Bearer {self.token}",
@@ -125,63 +127,34 @@ class ApifySource(BaseScraper):
         date_to: Optional[str] = None,
     ) -> str:
         """تشغيل actor وإرجاع run_id"""
-        # خيارات متقدمة من config
-        max_comments = self.config.get("max_comments_per_post", 10)
-        include_comments = self.config.get("include_comments", True)
-        include_reactions_breakdown = self.config.get("include_reactions_breakdown", True)
+        # Input schema خاص بـ curious_coder/facebook-post-scraper
+        # https://apify.com/curious_coder/facebook-post-scraper/input-schema
+        #
+        # Required: urls (array of strings)
+        # Optional: count, outputFormat, sortType, scrapePhotos, cookie,
+        #           minDelay (>=1), maxDelay (>=10), scrapeUntil, proxy
+        input_data = {
+            "urls": [page_url],           # array of strings (ليس startUrls)
+            "count": max_posts,           # ليس resultsLimit
+            "outputFormat": "simple",     # flat structure - أسهل للمعالجة
+            "sortType": "new_posts",      # الأحدث أولاً
+            "scrapePhotos": False,        # يزيد التكلفة وعدنا ميديا من attachments
+        }
 
-        if self.is_curious_coder:
-            # curious_coder/facebook-post-scraper input schema
-            # https://apify.com/curious_coder/facebook-post-scraper/input-schema
-            #
-            # Required: urls (array of strings)
-            # Optional: count, outputFormat, sortType, scrapePhotos, cookie,
-            #           minDelay (>=1), maxDelay (>=10), scrapeUntil, proxy
-            #
-            # ملاحظة: الـ actor بيفرض maxDelay>=10 ثواني (rate-limit protection)
-            # ومنه ما نحدد minDelay/maxDelay بنفسنا — نخليها على الـ defaults
-            # (1 و 10) إلا إذا المستخدم override من config.
-            input_data = {
-                "urls": [page_url],           # array of strings
-                "count": max_posts,           # not resultsLimit
-                "outputFormat": "simple",     # flat structure - أسهل للمعالجة
-                "sortType": "new_posts",      # الأحدث أولاً
-                "scrapePhotos": False,        # يزيد التكلفة وعدنا ميديا من attachments
-            }
+        # override اختياري من config (الحدود الدنيا للـ actor: 1 و 10 ثواني)
+        user_min = self.config.get("min_delay")
+        user_max = self.config.get("max_delay")
+        if isinstance(user_min, int) and user_min >= 1:
+            input_data["minDelay"] = user_min
+        if isinstance(user_max, int) and user_max >= 10:
+            input_data["maxDelay"] = user_max
 
-            # override اختياري من config
-            user_min = self.config.get("min_delay")
-            user_max = self.config.get("max_delay")
-            if isinstance(user_min, int) and user_min >= 1:
-                input_data["minDelay"] = user_min
-            if isinstance(user_max, int) and user_max >= 10:
-                input_data["maxDelay"] = user_max
-
-            if date_from:
-                input_data["scrapeUntil"] = date_from
-            # cookie/proxy اختيارية — يتركها فاضية افتراضياً
-            cookie_val = self.config.get("cookie")
-            if cookie_val:
-                input_data["cookie"] = cookie_val
-        else:
-            # apify/facebook-posts-scraper legacy schema
-            input_data = {
-                "startUrls": [{"url": page_url}],
-                "resultsLimit": max_posts,
-                "proxyConfiguration": {
-                    "useApifyProxy": True,
-                    "apifyProxyGroups": ["RESIDENTIAL"],
-                },
-            }
-            if include_comments and max_comments > 0:
-                input_data["commentsLimit"] = max_comments
-            if include_reactions_breakdown:
-                input_data["likedBy"] = False
-                input_data["reactions"] = True
-            if date_from:
-                input_data["onlyPostsNewerThan"] = date_from
-            if date_to:
-                input_data["onlyPostsOlderThan"] = date_to
+        if date_from:
+            input_data["scrapeUntil"] = date_from
+        # cookie/proxy اختيارية — نتركها فاضية افتراضياً
+        cookie_val = self.config.get("cookie")
+        if cookie_val:
+            input_data["cookie"] = cookie_val
 
         url = f"{APIFY_BASE}/acts/{self.actor_id_url}/runs"
 
@@ -269,11 +242,9 @@ class ApifySource(BaseScraper):
     ) -> UnifiedPost | None:
         """
         تحويل Apify item إلى UnifiedPost.
-        يدعم كلا schema:
-          - curious_coder/facebook-post-scraper: text, createdAt, reactionCount,
-            commentCount, shareCount, user.{id,name,url}, attachments, topComments
-          - apify/facebook-posts-scraper: message/text, time/timestamp, likes,
-            comments, media, commentsData
+        schema الخاص بـ curious_coder/facebook-post-scraper (outputFormat=simple):
+          text, url, createdAt (unix ts), reactionCount, commentCount, shareCount,
+          user.{id,name,url}, attachments, topComments
         """
         # النص
         text = (

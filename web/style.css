@@ -2519,6 +2519,33 @@ button:active {
 
 /* .post-media-count موحّد في قسم Media - انظر أدناه */
 
+/* Locked config value (read-only) */
+.locked-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--ink-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.85rem;
+  color: var(--text);
+  direction: ltr;
+}
+
+.locked-value .lock-icon {
+  font-size: 1rem;
+  filter: grayscale(0.3);
+}
+
+.locked-value code {
+  background: transparent;
+  padding: 0;
+  color: var(--accent-700);
+  font-weight: 600;
+}
+
 /* Raw JSON debug viewer */
 .raw-json-view {
   margin-top: 10px;
