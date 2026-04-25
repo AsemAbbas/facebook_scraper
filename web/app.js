@@ -1574,8 +1574,9 @@ function openPagesModal() {
     <div class="pages-manager">
       <div class="pages-toolbar">
         <button class="btn-trigger btn-sm" id="addPageBtn" type="button">+ إضافة صفحة</button>
-        <button class="btn-refresh btn-sm" id="exportPagesJson" type="button">📤 تصدير</button>
-        <button class="btn-refresh btn-sm" id="importPagesJson" type="button">📥 استيراد</button>
+        <button class="btn-refresh btn-sm" id="importPagesJson" type="button" title="استيراد من Excel/CSV/JSON">📥 استيراد</button>
+        <button class="btn-refresh btn-sm" id="exportPagesJson" type="button" title="تصدير إلى Excel/CSV">📤 تصدير CSV</button>
+        <button class="btn-refresh btn-sm" id="downloadPagesTemplate" type="button" title="تحميل قالب CSV فاضي">📋 قالب CSV</button>
       </div>
 
       <div class="pages-list" id="pagesList">
@@ -1597,7 +1598,7 @@ function openPagesModal() {
 
       <p class="note">
         ${hasBackend
-          ? `<strong>💡 نصيحة:</strong> اضغط 🧪 لاختبار صفحة قبل الحفظ (يسحب 3 منشورات للتأكد من الرابط). بعد الحفظ، اضغط "سحب الآن" ▶️.`
+          ? `<strong>💡 الاستيراد من Excel:</strong> صدّر قالب CSV، افتحه في Excel، عبّي الأعمدة (عدد المتابعين، اسم الصفحة، City، NumberOfPost، Page Link)، احفظه كـ CSV، ثم استورده هنا. الأعمدة بالعربية أو الإنجليزية.`
           : `<strong>ملاحظة:</strong> بعد الحفظ، شغّل سحب جديد من زر "سحب الآن".`}
       </p>
     </div>
@@ -1620,17 +1621,27 @@ function renderPageRow(page, index) {
       </div>
       <div class="page-row-body">
         <div class="form-row">
-          <label class="filter-label">رابط الصفحة / RSS Feed</label>
-          <input type="text" class="input page-url" placeholder="https://facebook.com/..." value="${escapeHtml(page.url || '')}" dir="ltr">
+          <label class="filter-label">رابط الصفحة (Page Link)</label>
+          <input type="text" class="input page-url" placeholder="https://www.facebook.com/..." value="${escapeHtml(page.url || '')}" dir="ltr">
         </div>
         <div class="page-row-inline">
           <div class="form-row">
-            <label class="filter-label">Slug</label>
-            <input type="text" class="input page-slug" placeholder="auto" value="${escapeHtml(page.slug || '')}" dir="ltr">
+            <label class="filter-label">المدينة (City)</label>
+            <input type="text" class="input page-city" placeholder="مثلاً: عام، رام الله" value="${escapeHtml(page.city || '')}">
           </div>
           <div class="form-row">
-            <label class="filter-label">حد أقصى للمنشورات</label>
+            <label class="filter-label">عدد المتابعين</label>
+            <input type="number" class="input page-followers" min="0" placeholder="0" value="${page.followers || 0}" dir="ltr">
+          </div>
+          <div class="form-row">
+            <label class="filter-label">عدد المنشورات (NumberOfPost)</label>
             <input type="number" class="input page-max-posts" min="1" max="500" value="${page.max_posts || 30}">
+          </div>
+        </div>
+        <div class="page-row-inline">
+          <div class="form-row">
+            <label class="filter-label">Slug (الـ ID المختصر)</label>
+            <input type="text" class="input page-slug" placeholder="تلقائي من الاسم" value="${escapeHtml(page.slug || '')}" dir="ltr">
           </div>
           <div class="form-row">
             <label class="filter-label">المصدر</label>
@@ -1644,16 +1655,6 @@ function renderPageRow(page, index) {
             </select>
           </div>
         </div>
-        <div class="page-row-inline">
-          <div class="form-row">
-            <label class="filter-label">من تاريخ (اختياري)</label>
-            <input type="date" class="input page-date-from" value="${(page.date_from || '').slice(0,10)}">
-          </div>
-          <div class="form-row">
-            <label class="filter-label">إلى تاريخ (اختياري)</label>
-            <input type="date" class="input page-date-to" value="${(page.date_to || '').slice(0,10)}">
-          </div>
-        </div>
       </div>
     </div>
   `;
@@ -1665,6 +1666,7 @@ function bindPagesManagerEvents() {
     STATE.pagesConfig.push({
       slug: '', name: '', url: '',
       max_posts: 30, source: 'auto', enabled: true,
+      city: '', followers: 0,
     });
     openPagesModal();
   });
@@ -1681,38 +1683,60 @@ function bindPagesManagerEvents() {
     });
   });
 
+  // ===== CSV / Excel export — same headers as the Excel screenshot =====
   document.getElementById('exportPagesJson').addEventListener('click', () => {
     syncPagesFromUI();
-    const json = JSON.stringify({ pages: STATE.pagesConfig }, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
+    const csv = pagesToCsv(STATE.pagesConfig);
+    // BOM ensures Excel opens UTF-8 Arabic correctly
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'pages.json';
+    a.download = `pages_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast('تم تصدير pages.json', 'success');
+    showToast(`تم تصدير ${STATE.pagesConfig.length} صفحة كـ CSV`, 'success');
   });
 
+  // ===== Import from CSV (Excel-saved) or JSON =====
   document.getElementById('importPagesJson').addEventListener('click', () => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'application/json';
+    input.accept = '.csv,.tsv,.txt,application/json';
     input.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
       try {
         const text = await file.text();
-        const data = JSON.parse(text);
-        if (Array.isArray(data.pages)) {
-          STATE.pagesConfig = data.pages;
-          openPagesModal();
-          showToast(`تم استيراد ${data.pages.length} صفحة`, 'success');
+        let pages = [];
+        if (file.name.toLowerCase().endsWith('.json') || text.trim().startsWith('{')) {
+          const data = JSON.parse(text);
+          pages = Array.isArray(data) ? data : (data.pages || []);
         } else {
-          showToast('الملف غير صالح', 'error');
+          pages = csvToPages(text);
         }
+        if (!Array.isArray(pages) || pages.length === 0) {
+          showToast('لم يتم العثور على صفحات في الملف', 'error');
+          return;
+        }
+        // Merge by slug — overwrites existing, adds new
+        const existing = new Map(STATE.pagesConfig.map(p => [p.slug || slugify(p.name), p]));
+        let added = 0, updated = 0;
+        for (const p of pages) {
+          const slug = p.slug || slugify(p.name);
+          if (!slug || !p.url) continue;
+          if (existing.has(slug)) {
+            Object.assign(existing.get(slug), p);
+            updated++;
+          } else {
+            STATE.pagesConfig.push({ ...p, slug });
+            added++;
+          }
+        }
+        openPagesModal();
+        showToast(`✅ تم الاستيراد: ${added} جديدة، ${updated} محدّثة`, 'success');
       } catch (err) {
-        showToast(`خطأ: ${err.message}`, 'error');
+        showToast('خطأ في القراءة: ' + err.message, 'error');
       }
     };
     input.click();
@@ -1752,6 +1776,28 @@ function bindPagesManagerEvents() {
     ghBtn.addEventListener('click', () => {
       syncPagesFromUI();
       saveToGitHub();
+    });
+  }
+
+  // === Download empty CSV template ===
+  const tplBtn = document.getElementById('downloadPagesTemplate');
+  if (tplBtn) {
+    tplBtn.addEventListener('click', () => {
+      const sample = [
+        { name: 'تلفزيون فلسطين', city: 'عام', followers: 6218372, max_posts: 45,
+          url: 'https://www.facebook.com/PalestineTV', slug: '', source: 'auto', enabled: true },
+        { name: 'وكالة وفا', city: 'عام', followers: 795113, max_posts: 40,
+          url: 'https://www.facebook.com/wafagency', slug: '', source: 'auto', enabled: true },
+      ];
+      const csv = pagesToCsv(sample);
+      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'pages_template.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('تم تنزيل القالب — افتحه في Excel، املأ البيانات، ثم استورده', 'success');
     });
   }
 
@@ -1837,11 +1883,130 @@ function syncPagesFromUI() {
     page.max_posts = parseInt(row.querySelector('.page-max-posts').value) || 30;
     page.source = row.querySelector('.page-source').value;
     page.enabled = row.querySelector('.page-enabled').checked;
-    const df = row.querySelector('.page-date-from').value;
-    const dt = row.querySelector('.page-date-to').value;
-    if (df) page.date_from = df; else delete page.date_from;
-    if (dt) page.date_to = dt; else delete page.date_to;
+    page.city = (row.querySelector('.page-city')?.value || '').trim();
+    page.followers = parseInt(row.querySelector('.page-followers')?.value) || 0;
+    // Date fields removed from this section — schedule has its own date range
+    delete page.date_from;
+    delete page.date_to;
   });
+}
+
+// ==================== CSV import/export (Excel-friendly) ====================
+// نفس ترتيب الأعمدة في صورة الإكسل اللي بعتها المستخدم:
+// عدد المتابعين | اسم الصفحة | City | NumberOfPost | Page Link
+
+const CSV_HEADERS_AR = ['عدد المتابعين', 'اسم الصفحة', 'City', 'NumberOfPost', 'Page Link'];
+
+// Aliases عشان نتعرف على الأعمدة حتى لو الـ Excel غيّر التسمية
+const HEADER_ALIASES = {
+  followers:  ['عدد المتابعين', 'followers', 'follower', 'fans', 'متابعين', 'followerscount', 'followers_count'],
+  name:       ['اسم الصفحة', 'name', 'page name', 'page_name', 'الاسم', 'الصفحة', 'page'],
+  city:       ['city', 'المدينة', 'مدينة', 'المنطقة'],
+  max_posts:  ['numberofpost', 'number of post', 'max_posts', 'maxposts', 'عدد المنشورات', 'حد المنشورات'],
+  url:        ['page link', 'pagelink', 'url', 'link', 'الرابط', 'رابط الصفحة'],
+  slug:       ['slug', 'id', 'الـid', 'كود'],
+  source:     ['source', 'المصدر', 'مصدر'],
+  enabled:    ['enabled', 'مفعل', 'مفعّل', 'active'],
+};
+
+function _csvEscape(v) {
+  const s = String(v ?? '');
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function pagesToCsv(pages) {
+  const lines = [CSV_HEADERS_AR.join(',')];
+  for (const p of pages) {
+    lines.push([
+      _csvEscape(p.followers || 0),
+      _csvEscape(p.name || ''),
+      _csvEscape(p.city || ''),
+      _csvEscape(p.max_posts || 30),
+      _csvEscape(p.url || ''),
+    ].join(','));
+  }
+  return lines.join('\r\n');
+}
+
+function _parseCsvLine(line) {
+  // RFC 4180 CSV parsing — يدعم الاقتباس وعلامة , داخل خلية مقتبسة
+  const out = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"' && line[i+1] === '"') { cur += '"'; i++; }
+      else if (c === '"') { inQ = false; }
+      else { cur += c; }
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ',' || c === '\t' || c === ';') { out.push(cur); cur = ''; }
+      else cur += c;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+function _findHeaderIndex(headers, fieldKey) {
+  const aliases = HEADER_ALIASES[fieldKey] || [];
+  const norm = h => h.replace(/\s+/g, ' ').trim().toLowerCase();
+  for (let i = 0; i < headers.length; i++) {
+    const h = norm(headers[i]);
+    if (aliases.some(a => norm(a) === h || h.includes(norm(a)))) return i;
+  }
+  return -1;
+}
+
+function csvToPages(text) {
+  // أزل BOM لو موجود
+  text = text.replace(/^﻿/, '');
+  const rows = text.split(/\r?\n/).filter(r => r.trim());
+  if (rows.length < 2) return [];
+
+  const headers = _parseCsvLine(rows[0]);
+  const idx = {
+    followers: _findHeaderIndex(headers, 'followers'),
+    name:      _findHeaderIndex(headers, 'name'),
+    city:      _findHeaderIndex(headers, 'city'),
+    max_posts: _findHeaderIndex(headers, 'max_posts'),
+    url:       _findHeaderIndex(headers, 'url'),
+    slug:      _findHeaderIndex(headers, 'slug'),
+    source:    _findHeaderIndex(headers, 'source'),
+    enabled:   _findHeaderIndex(headers, 'enabled'),
+  };
+
+  // الأعمدة الإجبارية: name + url
+  if (idx.name === -1 && idx.url === -1) {
+    throw new Error('لم نجد أعمدة "اسم الصفحة" أو "Page Link" — تأكد من أن أول صف يحوي العناوين');
+  }
+
+  const pages = [];
+  for (let r = 1; r < rows.length; r++) {
+    const cells = _parseCsvLine(rows[r]);
+    const get = (k) => idx[k] !== -1 ? (cells[idx[k]] || '').trim() : '';
+
+    const url = get('url');
+    const name = get('name');
+    if (!url && !name) continue;
+
+    const followersRaw = get('followers').replace(/[,\s]/g, '');
+    const maxPostsRaw = get('max_posts');
+    const enabledRaw = get('enabled').toLowerCase();
+
+    pages.push({
+      name: name || '(بدون اسم)',
+      url,
+      slug: get('slug') || slugify(name || url),
+      city: get('city'),
+      followers: parseInt(followersRaw) || 0,
+      max_posts: parseInt(maxPostsRaw) || 30,
+      source: get('source') || 'auto',
+      enabled: idx.enabled === -1 ? true : !['0', 'no', 'false', 'لا', 'معطل'].includes(enabledRaw),
+    });
+  }
+  return pages;
 }
 
 async function saveToGitHub() {

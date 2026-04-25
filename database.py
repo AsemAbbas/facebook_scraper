@@ -213,6 +213,8 @@ SCHEMA_STATEMENTS = [
         max_posts       INT DEFAULT 20,
         source          VARCHAR(32) DEFAULT 'auto',
         enabled         TINYINT(1) DEFAULT 1,
+        city            VARCHAR(120) DEFAULT '',
+        followers       INT DEFAULT 0,
         date_from       DATE NULL,
         date_to         DATE NULL,
         tags            TEXT,
@@ -370,12 +372,36 @@ def init_db() -> None:
         for stmt in SCHEMA_STATEMENTS:
             cur.execute(stmt)
 
+    # Migration: add new columns to pages (city + followers) for legacy DBs
+    try:
+        _migrate_pages_add_city_followers()
+    except Exception as e:
+        print(f"[db] pages migration skipped: {e}")
+
     # Migration: force apify actor to the locked one (curious_coder/facebook-post-scraper)
     # هذا يُطبَّق على أي row قديم كان فيه actor_id مختلف
     try:
         _force_apify_actor_lock()
     except Exception as e:
         print(f"[db] apify actor lock migration skipped: {e}")
+
+
+def _migrate_pages_add_city_followers() -> None:
+    """يضيف عمودي city و followers لو مش موجودين (للـ databases القديمة)"""
+    with db_cursor() as cur:
+        cur.execute("""
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pages'
+        """)
+        existing = {(r["COLUMN_NAME"] if isinstance(r, dict) else r[0]).lower()
+                    for r in (cur.fetchall() or [])}
+
+        if "city" not in existing:
+            cur.execute("ALTER TABLE pages ADD COLUMN city VARCHAR(120) DEFAULT '' AFTER enabled")
+            print("[db] added pages.city column")
+        if "followers" not in existing:
+            cur.execute("ALTER TABLE pages ADD COLUMN followers INT DEFAULT 0 AFTER city")
+            print("[db] added pages.followers column")
 
 
 def _force_apify_actor_lock() -> None:
@@ -533,6 +559,8 @@ def list_pages(user_id: int, only_enabled: bool = False) -> list[dict]:
             d = dict(r)
             d["enabled"] = bool(d["enabled"])
             d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
+            d["city"] = d.get("city") or ""
+            d["followers"] = int(d.get("followers") or 0)
             # Convert dates to strings
             for k in ("date_from", "date_to", "created_at"):
                 if d.get(k):
@@ -570,20 +598,25 @@ def upsert_pages(user_id: int, pages: list[dict]) -> None:
             tags = json.dumps(p.get("tags") or [])
             cur.execute("""
                 INSERT INTO pages
-                (user_id, slug, name, url, max_posts, source, enabled, date_from, date_to, tags, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (user_id, slug, name, url, max_posts, source, enabled, city, followers,
+                 date_from, date_to, tags, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     name=VALUES(name),
                     url=VALUES(url),
                     max_posts=VALUES(max_posts),
                     source=VALUES(source),
                     enabled=VALUES(enabled),
+                    city=VALUES(city),
+                    followers=VALUES(followers),
                     date_from=VALUES(date_from),
                     date_to=VALUES(date_to),
                     tags=VALUES(tags)
             """, (user_id, p["slug"], p.get("name", ""), p.get("url", ""),
                   int(p.get("max_posts", 20)), p.get("source", "auto"),
                   1 if p.get("enabled", True) else 0,
+                  (p.get("city") or "")[:120],
+                  int(p.get("followers") or 0),
                   p.get("date_from") or None, p.get("date_to") or None,
                   tags, now))
 
