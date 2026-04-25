@@ -320,16 +320,6 @@ SCHEMA_STATEMENTS = [
 
 DEFAULT_SOURCES = [
     {
-        "source_name": "playwright",
-        "enabled": 1,
-        "priority": 5,
-        "config": {
-            "headless": True,
-            "scroll_pause_seconds": 2.5,
-            "use_mbasic": False,
-        },
-    },
-    {
         "source_name": "apify",
         "enabled": 0,
         "priority": 1,
@@ -343,26 +333,17 @@ DEFAULT_SOURCES = [
         },
     },
     {
-        "source_name": "fetchrss",
-        "enabled": 0,
+        "source_name": "rss",
+        "enabled": 1,    # مفعّل افتراضياً (مجاني، لا يحتاج token)
         "priority": 2,
-        "config": {},
-    },
-    {
-        "source_name": "rssapp",
-        "enabled": 0,
-        "priority": 3,
-        "config": {},
-    },
-    {
-        "source_name": "rsshub",
-        "enabled": 0,
-        "priority": 4,
         "config": {
-            "base_url": "https://rsshub.app",
+            "timeout_seconds": 30,
         },
     },
 ]
+
+# مصادر قديمة تم إلغاؤها — نحذفها من DB لو موجودة
+DEPRECATED_SOURCES = ("playwright", "fetchrss", "rssapp", "rsshub")
 
 
 def init_db() -> None:
@@ -384,6 +365,44 @@ def init_db() -> None:
         _force_apify_actor_lock()
     except Exception as e:
         print(f"[db] apify actor lock migration skipped: {e}")
+
+    # Migration: حذف المصادر القديمة + ضمان وجود source 'rss' لكل user
+    try:
+        _migrate_simplify_sources()
+    except Exception as e:
+        print(f"[db] sources migration skipped: {e}")
+
+
+def _migrate_simplify_sources() -> None:
+    """
+    يحذف rows من المصادر القديمة (playwright/fetchrss/rssapp/rsshub)
+    ويضمن أن لكل user الـ source 'rss' موجود ومفعّل افتراضياً.
+    """
+    now = datetime.now(timezone.utc)
+    with db_cursor() as cur:
+        # احذف المصادر القديمة
+        for old in DEPRECATED_SOURCES:
+            cur.execute("DELETE FROM source_settings WHERE source_name=%s", (old,))
+            if cur.rowcount > 0:
+                print(f"[db] removed {cur.rowcount} legacy '{old}' source row(s)")
+
+        # تأكد كل user عنده source 'rss'
+        cur.execute("SELECT id FROM users")
+        users = cur.fetchall() or []
+        for u in users:
+            uid = u["id"] if isinstance(u, dict) else u[0]
+            cur.execute(
+                "SELECT 1 FROM source_settings WHERE user_id=%s AND source_name='rss'",
+                (uid,)
+            )
+            if cur.fetchone():
+                continue
+            cur.execute("""
+                INSERT INTO source_settings
+                (user_id, source_name, enabled, priority, token_encrypted, config_json, updated_at)
+                VALUES (%s, 'rss', 1, 2, '', %s, %s)
+            """, (uid, json.dumps({"timeout_seconds": 30}), now))
+            print(f"[db] seeded 'rss' source for user_id={uid}")
 
 
 def _migrate_pages_add_city_followers() -> None:
@@ -680,14 +699,22 @@ def _content_fingerprint(page_slug: str, text: str, post_url: str) -> str:
     return ""
 
 
+def _global_url_fingerprint(post_url: str) -> str:
+    """fingerprint لرابط مُطبَّع - نفس URL على pages مختلفة = نفس المنشور"""
+    canon = _canonical_post_url(post_url)
+    if not canon:
+        return ""
+    return "g:" + hashlib.sha1(canon.encode("utf-8")).hexdigest()[:32]
+
+
 def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> int:
     """
     يرجع عدد المنشورات الجديدة.
-    يمنع التكرار على 3 مستويات:
-      1. UNIQUE KEY على (user_id, page_slug, post_id) - دفاع أولي في DB
-      2. تطبيع post_url (إزالة query params المتغيّرة) وفحص مسبق
-      3. content fingerprint (URL مُطبَّع أو hash النص) - يكشف لما نفس
-         المنشور يجي من مصادر مختلفة بـ post_id مختلف
+    يمنع التكرار على 4 مستويات:
+      1. UNIQUE KEY على (user_id, page_slug, post_id) - دفاع DB
+      2. cross-page post_id: نفس الـ ID موجود في أي صفحة أخرى للمستخدم → skip
+      3. cross-page canonical URL: نفس الرابط (بعد تطبيع) في أي صفحة → skip
+      4. within-page text fingerprint: نفس النص على نفس الصفحة → skip
     """
     if not posts:
         return 0
@@ -695,47 +722,62 @@ def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> int:
     skipped_dup = 0
 
     with db_cursor() as cur:
-        # جمع كل الـ fingerprints الموجودة للصفحة دفعة وحدة (أسرع من فحص واحد واحد)
-        cur.execute("""
-            SELECT post_id, post_url, text
-            FROM posts
-            WHERE user_id = %s AND page_slug = %s
-        """, (user_id, page_slug))
-        existing_rows = cur.fetchall() or []
-        existing_post_ids: set[str] = set()
-        existing_fingerprints: set[str] = set()
-        for r in existing_rows:
+        # 1) كل post_ids الموجودة لهذا المستخدم (cross-page)
+        cur.execute("SELECT post_id, post_url, text, page_slug FROM posts WHERE user_id=%s",
+                    (user_id,))
+        rows = cur.fetchall() or []
+        existing_pids_global: set[str] = set()
+        existing_urls_global: set[str] = set()    # canonical URL fingerprints
+        existing_texts_for_page: set[str] = set()  # text fingerprints لـ هذه الصفحة فقط
+        for r in rows:
             pid = r.get("post_id") if isinstance(r, dict) else r[0]
             purl = r.get("post_url") if isinstance(r, dict) else r[1]
             ptxt = r.get("text") if isinstance(r, dict) else r[2]
+            slug = r.get("page_slug") if isinstance(r, dict) else r[3]
             if pid:
-                existing_post_ids.add(str(pid))
-            fp = _content_fingerprint(page_slug, ptxt or "", purl or "")
-            if fp:
-                existing_fingerprints.add(fp)
+                existing_pids_global.add(str(pid))
+            ufp = _global_url_fingerprint(purl or "")
+            if ufp:
+                existing_urls_global.add(ufp)
+            if slug == page_slug and ptxt:
+                norm = ptxt.strip()[:300]
+                if norm:
+                    existing_texts_for_page.add(
+                        hashlib.sha1(norm.encode("utf-8")).hexdigest()[:32]
+                    )
 
-        # معرّفات الجلسة الحالية لمنع التكرار داخل نفس الـ batch
+        # batch-level dedup (داخل نفس الإدخال)
         seen_ids_batch: set[str] = set()
-        seen_fps_batch: set[str] = set()
+        seen_urls_batch: set[str] = set()
+        seen_texts_batch: set[str] = set()
 
         for p in posts:
             pid = (p.get("post_id") or "")[:200]
             purl = p.get("post_url") or ""
             ptxt = p.get("text") or ""
 
-            # 1. تكرار بالـ post_id (موجود في DB أو في نفس الـ batch)
-            if pid and (pid in existing_post_ids or pid in seen_ids_batch):
+            # 1. تكرار بالـ post_id (في أي صفحة لهذا المستخدم)
+            if pid and (pid in existing_pids_global or pid in seen_ids_batch):
                 skipped_dup += 1
                 continue
 
-            # 2. تكرار بالـ fingerprint
-            fp = _content_fingerprint(page_slug, ptxt, purl)
-            if fp and (fp in existing_fingerprints or fp in seen_fps_batch):
+            # 2. تكرار بالرابط بعد تطبيعه (cross-page)
+            ufp = _global_url_fingerprint(purl)
+            if ufp and (ufp in existing_urls_global or ufp in seen_urls_batch):
                 skipped_dup += 1
                 continue
 
-            # 3. لا بصمة ولا معرّف → منشور فارغ، نتجاهله
-            if not pid and not fp:
+            # 3. تكرار النص داخل نفس الصفحة (للمنشورات بدون رابط واضح)
+            tfp = ""
+            norm_text = ptxt.strip()[:300]
+            if norm_text:
+                tfp = hashlib.sha1(norm_text.encode("utf-8")).hexdigest()[:32]
+                if tfp in existing_texts_for_page or tfp in seen_texts_batch:
+                    skipped_dup += 1
+                    continue
+
+            # 4. لا ID ولا URL ولا نص → نتجاهله
+            if not pid and not ufp and not tfp:
                 skipped_dup += 1
                 continue
 
@@ -764,10 +806,13 @@ def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> int:
                     new_count += 1
                     if pid:
                         seen_ids_batch.add(pid)
-                        existing_post_ids.add(pid)
-                    if fp:
-                        seen_fps_batch.add(fp)
-                        existing_fingerprints.add(fp)
+                        existing_pids_global.add(pid)
+                    if ufp:
+                        seen_urls_batch.add(ufp)
+                        existing_urls_global.add(ufp)
+                    if tfp:
+                        seen_texts_batch.add(tfp)
+                        existing_texts_for_page.add(tfp)
             except Exception:
                 continue
     return new_count
@@ -893,37 +938,65 @@ def deduplicate_existing_posts(user_id: int) -> dict:
     """
     يمسح المنشورات المكرّرة الموجودة بالفعل في DB.
     يحتفظ بأقدم نسخة (أقل id) ويحذف الباقي.
-    يرجع {removed, remaining, by_url, by_text}
+    قواعد: نفس post_id (cross-page) أو نفس canonical URL (cross-page)
+           أو نفس النص داخل نفس الصفحة.
     """
     removed = 0
+    removed_by_id = 0
     removed_by_url = 0
     removed_by_text = 0
     with db_cursor() as cur:
         cur.execute("""
-            SELECT id, page_slug, post_url, text
+            SELECT id, post_id, page_slug, post_url, text
             FROM posts
             WHERE user_id=%s
             ORDER BY id ASC
         """, (user_id,))
         rows = cur.fetchall() or []
-        seen_fps: dict[str, int] = {}  # fingerprint → first id kept
+
+        seen_pids: dict[str, int] = {}      # post_id → first row id
+        seen_urls: dict[str, int] = {}      # global URL fp → first row id
+        seen_texts: dict[str, int] = {}     # (page_slug + text fp) → first row id
         to_delete: list[int] = []
+
         for r in rows:
-            rid = r["id"] if isinstance(r, dict) else r[0]
-            slug = (r["page_slug"] if isinstance(r, dict) else r[1]) or ""
-            purl = (r["post_url"] if isinstance(r, dict) else r[2]) or ""
-            ptxt = (r["text"] if isinstance(r, dict) else r[3]) or ""
-            fp = _content_fingerprint(slug, ptxt, purl)
-            if not fp:
-                continue
-            if fp in seen_fps:
-                to_delete.append(rid)
-                if fp.startswith("u:"):
+            rid  = r["id"]        if isinstance(r, dict) else r[0]
+            pid  = r["post_id"]   if isinstance(r, dict) else r[1]
+            slug = r["page_slug"] if isinstance(r, dict) else r[2]
+            purl = r["post_url"]  if isinstance(r, dict) else r[3]
+            ptxt = r["text"]      if isinstance(r, dict) else r[4]
+
+            pid = (pid or "")
+            slug = (slug or "")
+            purl = (purl or "")
+            ptxt = (ptxt or "")
+
+            # 1) cross-page post_id
+            if pid:
+                if pid in seen_pids:
+                    to_delete.append(rid)
+                    removed_by_id += 1
+                    continue
+                seen_pids[pid] = rid
+
+            # 2) cross-page URL
+            ufp = _global_url_fingerprint(purl)
+            if ufp:
+                if ufp in seen_urls:
+                    to_delete.append(rid)
                     removed_by_url += 1
-                else:
+                    continue
+                seen_urls[ufp] = rid
+
+            # 3) within-page text
+            norm_text = ptxt.strip()[:300]
+            if norm_text:
+                tfp = slug + ":" + hashlib.sha1(norm_text.encode("utf-8")).hexdigest()[:32]
+                if tfp in seen_texts:
+                    to_delete.append(rid)
                     removed_by_text += 1
-            else:
-                seen_fps[fp] = rid
+                    continue
+                seen_texts[tfp] = rid
 
         # Batch delete in chunks of 500
         BATCH = 500
@@ -943,6 +1016,7 @@ def deduplicate_existing_posts(user_id: int) -> dict:
     return {
         "removed": removed,
         "remaining": remaining,
+        "by_id": removed_by_id,
         "by_url": removed_by_url,
         "by_text": removed_by_text,
     }

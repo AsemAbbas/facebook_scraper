@@ -57,10 +57,7 @@ import auth as auth_module
 
 from scrapers.base import UnifiedPost
 from scrapers.apify_source import ApifySource
-from scrapers.fetchrss_source import FetchRSSSource
-from scrapers.rssapp_source import RSSAppSource
-from scrapers.rsshub_source import RSSHubSource
-from scrapers.playwright_source import PlaywrightSource
+from scrapers.rss_source import RSSSource
 
 
 # ======================================================================
@@ -87,66 +84,76 @@ auth_module.init_app(app)
 
 
 # Source metadata
+# المنصة الآن مقتصرة على مصدرين فقط:
+#  - apify: لصفحات فيسبوك (يحتاج token)
+#  - rss:   لأي رابط RSS/Atom (مجاني)
+# Auto-routing: عند سحب صفحة، نختار المصدر حسب URL الصفحة.
 SOURCE_REGISTRY = {
     "apify": ApifySource,
-    "fetchrss": FetchRSSSource,
-    "rssapp": RSSAppSource,
-    "rsshub": RSSHubSource,
-    "playwright": PlaywrightSource,
+    "rss":   RSSSource,
 }
 
 SOURCE_META = {
     "apify": {
         "icon": "💎", "label": "Apify",
-        "description": "أعلى جودة - تفاعلات وتعليقات دقيقة",
-        "price": "$49/شهر (5$ مجاني)",
+        "description": "لصفحات فيسبوك - تفاعلات وتعليقات دقيقة",
+        "price": "$5/1000 منشور (5$ مجاني)",
         "needs_token": True,
         "token_label": "Apify API Token",
         "token_help": "من apify.com → Settings → Integrations → Personal API token",
         "signup_url": "https://apify.com/sign-up",
         "token_url": "https://console.apify.com/account/integrations",
     },
-    "fetchrss": {
-        "icon": "🪶", "label": "FetchRSS",
-        "description": "الأرخص - يحتاج إنشاء RSS لكل صفحة",
-        "price": "$9.95/شهر",
-        "needs_token": False,
-        "token_label": "غير مطلوب (ضع RSS URL في كل صفحة)",
-        "token_help": "أنشئ feed في fetchrss.com ثم ضع رابط الـ RSS في حقل URL للصفحة",
-        "signup_url": "https://fetchrss.com",
-        "token_url": "https://fetchrss.com/dashboard",
-    },
-    "rssapp": {
-        "icon": "⚡", "label": "RSS.app",
-        "description": "RSS متوسط - تحديث أسرع",
-        "price": "$16.64/شهر",
-        "needs_token": False,
-        "token_label": "غير مطلوب (ضع RSS URL في كل صفحة)",
-        "token_help": "أنشئ feed في rss.app ثم ضع رابط الـ RSS في حقل URL للصفحة",
-        "signup_url": "https://rss.app",
-        "token_url": "https://rss.app/dashboard",
-    },
-    "rsshub": {
-        "icon": "🏠", "label": "RSSHub",
-        "description": "مفتوح المصدر - مجاني (تحتاج VPS)",
-        "price": "مجاني / ~$4 على VPS",
-        "needs_token": False,
-        "token_label": "Base URL للـ RSSHub instance",
-        "token_help": "استخدم https://rsshub.app (عام) أو نصّب نسختك الخاصة",
-        "signup_url": "https://docs.rsshub.app",
-        "token_url": "https://docs.rsshub.app/install/",
-    },
-    "playwright": {
-        "icon": "🎭", "label": "Playwright",
-        "description": "متصفح محلي - مجاني (غير متاح على cPanel)",
+    "rss": {
+        "icon": "📡", "label": "RSS",
+        "description": "أي رابط RSS أو Atom - مجاني تماماً",
         "price": "مجاني",
         "needs_token": False,
-        "token_label": "لا يتطلب (يستخدم Chromium محلياً)",
-        "token_help": "يعمل فقط على جهازك المحلي، ليس على cPanel. استخدم Apify/FetchRSS لـ cPanel.",
+        "token_label": "لا يحتاج توكن - فقط ضع رابط الـ RSS كـ URL للصفحة",
+        "token_help": "إذا كانت الصفحة فيها رابط RSS feed، ضعه في حقل 'رابط الصفحة' وسنقرأ منه مباشرة.",
         "signup_url": "",
         "token_url": "",
     },
 }
+
+
+def _detect_source_for_url(url: str) -> str:
+    """
+    Auto-routing: يحدد المصدر المناسب بناءً على رابط الصفحة.
+      - facebook.com / fb.com → apify
+      - أي شيء آخر → rss
+    """
+    if not url:
+        return "apify"
+    u = url.lower().strip()
+    if "facebook.com" in u or "fb.com" in u:
+        return "apify"
+    return "rss"
+
+
+def _build_user_sources(user_id: int) -> dict:
+    """
+    يبني dict { source_name: instance } للمصادر المفعّلة لهذا المستخدم.
+    """
+    user_sources = db.list_sources(user_id)
+    out: dict = {}
+    for s in user_sources:
+        if not s["enabled"]:
+            continue
+        cls = SOURCE_REGISTRY.get(s["source_name"])
+        if not cls:
+            continue
+        full_conf = dict(s.get("config") or {})
+        full_conf["name"] = s["source_name"]
+        full_conf["enabled"] = s["enabled"]
+        full_conf["priority"] = s["priority"]
+        # الـ token (apify only)
+        secrets_ = db.get_source_with_token(user_id, s["source_name"])
+        tok = (secrets_ or {}).get("token", "")
+        if s["source_name"] == "apify":
+            full_conf["token"] = tok
+        out[s["source_name"]] = cls(full_conf)
+    return out
 
 
 # Job tracking (in-memory for real-time progress; DB for persistent history)
@@ -546,52 +553,19 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
         update(total=len(pages_all))
         push_msg("info", f"📄 سحب {len(pages_all)} صفحة")
 
-        # Build sources - user-scoped
-        user_sources = db.list_sources(user_id)
-        sources_instances = []
-        for s in user_sources:
-            if not s["enabled"]:
-                continue
-            cls = SOURCE_REGISTRY.get(s["source_name"])
-            if not cls:
-                continue
-            # reconstruct config dict
-            full_conf = dict(s.get("config") or {})
-            full_conf["name"] = s["source_name"]
-            full_conf["enabled"] = s["enabled"]
-            full_conf["priority"] = s["priority"]
-            # token
-            secrets_ = db.get_source_with_token(user_id, s["source_name"])
-            tok = (secrets_ or {}).get("token", "")
-            if s["source_name"] == "apify":
-                full_conf["token"] = tok
-            elif s["source_name"] in ("fetchrss",):
-                full_conf["api_key"] = tok
-            elif s["source_name"] == "rssapp":
-                full_conf["api_key"] = tok
-            elif s["source_name"] == "rsshub":
-                full_conf["base_url"] = full_conf.get("base_url") or (tok or "https://rsshub.app")
-            sources_instances.append(cls(full_conf))
+        # Build a map: source_name -> source instance (user-scoped)
+        # Auto-routing يختار المناسب حسب رابط كل صفحة على حدة.
+        source_map = _build_user_sources(user_id)
 
-        sources_instances.sort(key=lambda s: s.priority)
-
-        if force_src:
-            # Put forced source first, keep others as fallback
-            preferred = [s for s in sources_instances if s.source_name == force_src]
-            others = [s for s in sources_instances if s.source_name != force_src]
-            sources_instances = preferred + others
-            if not preferred:
-                push_msg("warn", f"⚠️ المصدر المطلوب '{force_src}' غير مفعّل - استخدام البديل")
-
-        if not sources_instances:
-            push_msg("error", "لا يوجد مصدر مفعّل - افتح الإعدادات وفعّل مصدراً أولاً")
+        if not source_map:
+            push_msg("error", "لا يوجد مصدر مفعّل - افتح الإعدادات وفعّل Apify أو RSS")
             update(status="error",
                    finished_at=datetime.now(timezone.utc).isoformat())
             db.update_job(job_uid, status="error",
                           finished_at=datetime.now(timezone.utc))
             return
 
-        push_msg("info", f"🔌 المصادر (بترتيب الأولوية): {', '.join(s.source_name for s in sources_instances)}")
+        push_msg("info", f"🔌 المصادر المفعّلة: {', '.join(source_map.keys())}")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -608,35 +582,43 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
             page_df = page.get("date_from") or date_from
             page_dt = page.get("date_to") or date_to
 
-            done = False
-            for src in sources_instances:
-                if done:
-                    break
-                push_msg("info", f"  ⏳ محاولة {src.source_name}…")
-                try:
-                    posts_result = loop.run_until_complete(
-                        src.scrape_page(
-                            page["url"], page["slug"], page["name"],
-                            page.get("max_posts", 20),
-                            date_from=page_df, date_to=page_dt,
-                        )
-                    )
-                    if posts_result:
-                        posts_dicts = [p.to_dict() for p in posts_result]
-                        new_n = db.insert_posts(user_id, page["slug"], posts_dicts)
-                        push_msg("success",
-                                 f"  ✅ {src.source_name}: {len(posts_result)} سُحب ({new_n} جديد)")
-                        total_new += new_n
-                        success_count += 1
-                        sources_used.add(src.source_name)
-                        done = True
-                    else:
-                        push_msg("warn", f"  ⚠️  {src.source_name} ما رجع منشورات")
-                except Exception as e:
-                    push_msg("error", f"  ❌ {src.source_name}: {str(e)[:120]}")
+            # حدد المصدر المناسب لرابط الصفحة (override بـ force_src أو page.source إن وُجدا)
+            chosen = force_src or page.get("source")
+            if not chosen or chosen == "auto":
+                chosen = _detect_source_for_url(page.get("url", ""))
 
-            if not done:
-                push_msg("error", f"  ⛔ كل المصادر فشلت لـ {page['name']}")
+            src = source_map.get(chosen)
+            if not src:
+                # fallback: لو المختار غير مفعّل، خذ أي مصدر مفعّل آخر
+                fallback_name = next(iter(source_map.keys()), None)
+                if not fallback_name:
+                    push_msg("error", f"  ⛔ لا يوجد مصدر مفعّل لـ {page['name']}")
+                    continue
+                push_msg("warn", f"  ⚠️ المصدر '{chosen}' غير مفعّل - استخدام {fallback_name}")
+                src = source_map[fallback_name]
+                chosen = fallback_name
+
+            push_msg("info", f"  ⏳ {chosen} ← {page.get('url', '')[:60]}…")
+            try:
+                posts_result = loop.run_until_complete(
+                    src.scrape_page(
+                        page["url"], page["slug"], page["name"],
+                        page.get("max_posts", 20),
+                        date_from=page_df, date_to=page_dt,
+                    )
+                )
+                if posts_result:
+                    posts_dicts = [p.to_dict() for p in posts_result]
+                    new_n = db.insert_posts(user_id, page["slug"], posts_dicts)
+                    push_msg("success",
+                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد)")
+                    total_new += new_n
+                    success_count += 1
+                    sources_used.add(chosen)
+                else:
+                    push_msg("warn", f"  ⚠️  {chosen}: لم يرجع منشورات")
+            except Exception as e:
+                push_msg("error", f"  ❌ {chosen}: {str(e)[:120]}")
 
         update(progress=len(pages_all))
         finished = datetime.now(timezone.utc)
@@ -764,9 +746,13 @@ def api_history():
 def api_test_page():
     data = request.get_json(force=True)
     url = (data.get("url") or "").strip()
-    source_name = data.get("source", "playwright")
     if not url:
         return jsonify({"error": "URL مطلوب"}), 400
+
+    # Auto-route حسب الـ URL لو ما حدد المستخدم مصدر
+    source_name = data.get("source") or "auto"
+    if source_name == "auto":
+        source_name = _detect_source_for_url(url)
 
     sec = db.get_source_with_token(current_user.id, source_name)
     if not sec:
@@ -784,10 +770,6 @@ def api_test_page():
     conf["priority"] = sec.get("priority", 99)
     if source_name == "apify":
         conf["token"] = sec.get("token", "")
-    elif source_name in ("fetchrss", "rssapp"):
-        conf["api_key"] = sec.get("token", "")
-    elif source_name == "rsshub":
-        conf["base_url"] = conf.get("base_url") or "https://rsshub.app"
 
     src = cls(conf)
     loop = asyncio.new_event_loop()
@@ -972,48 +954,17 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
         update(total=len(pages_all))
         push_msg("info", f"📄 سحب {len(pages_all)} صفحة")
 
-        user_sources = db.list_sources(user_id)
-        sources_instances = []
-        for s in user_sources:
-            if not s["enabled"]:
-                continue
-            cls = SOURCE_REGISTRY.get(s["source_name"])
-            if not cls:
-                continue
-            full_conf = dict(s.get("config") or {})
-            full_conf["name"] = s["source_name"]
-            full_conf["enabled"] = s["enabled"]
-            full_conf["priority"] = s["priority"]
-            secrets_ = db.get_source_with_token(user_id, s["source_name"])
-            tok = (secrets_ or {}).get("token", "")
-            if s["source_name"] == "apify":
-                full_conf["token"] = tok
-            elif s["source_name"] in ("fetchrss", "rssapp"):
-                full_conf["api_key"] = tok
-            elif s["source_name"] == "rsshub":
-                full_conf["base_url"] = full_conf.get("base_url") or (tok or "https://rsshub.app")
-            sources_instances.append(cls(full_conf))
-
-        sources_instances.sort(key=lambda s: s.priority)
-
-        force_src = params.get("source")
-        if force_src:
-            # Put forced source first, but keep others as fallback
-            preferred = [s for s in sources_instances if s.source_name == force_src]
-            others = [s for s in sources_instances if s.source_name != force_src]
-            sources_instances = preferred + others
-            if not preferred:
-                push_msg("warn", f"⚠️ المصدر المطلوب '{force_src}' غير مفعّل - استخدام البديل")
-
-        if not sources_instances:
-            push_msg("error", "لا يوجد مصدر مفعّل. افتح الإعدادات وفعّل مصدراً أولاً.")
+        # Auto-routing per page (نفس منطق _run_scrape_job)
+        source_map = _build_user_sources(user_id)
+        if not source_map:
+            push_msg("error", "لا يوجد مصدر مفعّل. افتح الإعدادات وفعّل Apify أو RSS.")
             update(status="error",
                    finished_at=datetime.now(timezone.utc).isoformat())
             db.update_job(job_uid, status="error",
                           finished_at=datetime.now(timezone.utc))
             return
 
-        push_msg("info", f"🔌 المصادر (بترتيب الأولوية): {', '.join(s.source_name for s in sources_instances)}")
+        push_msg("info", f"🔌 المصادر المفعّلة: {', '.join(source_map.keys())}")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1024,37 +975,47 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
         started = datetime.now(timezone.utc)
         date_from = params.get("date_from")
         date_to = params.get("date_to")
+        force_src = params.get("source")
 
         for idx, page in enumerate(pages_all):
             update(progress=idx, current_page=page.get("name", ""))
             push_msg("info", f"📌 [{idx + 1}/{len(pages_all)}] {page.get('name', '')}")
 
-            done = False
-            for src in sources_instances:
-                if done:
-                    break
-                push_msg("info", f"  ⏳ محاولة {src.source_name}…")
-                try:
-                    posts_result = loop.run_until_complete(
-                        src.scrape_page(
-                            page["url"], page["slug"], page["name"],
-                            page.get("max_posts", 20),
-                            date_from=date_from, date_to=date_to,
-                        )
+            chosen = force_src or page.get("source")
+            if not chosen or chosen == "auto":
+                chosen = _detect_source_for_url(page.get("url", ""))
+
+            src = source_map.get(chosen)
+            if not src:
+                fallback_name = next(iter(source_map.keys()), None)
+                if not fallback_name:
+                    push_msg("error", f"  ⛔ لا يوجد مصدر مفعّل لـ {page['name']}")
+                    continue
+                push_msg("warn", f"  ⚠️ المصدر '{chosen}' غير مفعّل - استخدام {fallback_name}")
+                src = source_map[fallback_name]
+                chosen = fallback_name
+
+            push_msg("info", f"  ⏳ {chosen} ← {page.get('url', '')[:60]}…")
+            try:
+                posts_result = loop.run_until_complete(
+                    src.scrape_page(
+                        page["url"], page["slug"], page["name"],
+                        page.get("max_posts", 20),
+                        date_from=date_from, date_to=date_to,
                     )
-                    if posts_result:
-                        posts_dicts = [p.to_dict() for p in posts_result]
-                        new_n = db.insert_posts(user_id, page["slug"], posts_dicts)
-                        push_msg("success",
-                                 f"  ✅ {src.source_name}: {len(posts_result)} سُحب ({new_n} جديد)")
-                        total_new += new_n
-                        success_count += 1
-                        sources_used.add(src.source_name)
-                        done = True
-                    else:
-                        push_msg("warn", f"  ⚠️  {src.source_name} ما رجع منشورات")
-                except Exception as e:
-                    push_msg("error", f"  ❌ {src.source_name}: {str(e)[:120]}")
+                )
+                if posts_result:
+                    posts_dicts = [p.to_dict() for p in posts_result]
+                    new_n = db.insert_posts(user_id, page["slug"], posts_dicts)
+                    push_msg("success",
+                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد)")
+                    total_new += new_n
+                    success_count += 1
+                    sources_used.add(chosen)
+                else:
+                    push_msg("warn", f"  ⚠️  {chosen}: لم يرجع منشورات")
+            except Exception as e:
+                push_msg("error", f"  ❌ {chosen}: {str(e)[:120]}")
 
         update(progress=len(pages_all))
         finished = datetime.now(timezone.utc)
@@ -1149,6 +1110,75 @@ def healthz():
         "db": msg,
         "scheduler": bool(SCHEDULER_STATE.get("running")),
     }), (200 if ok else 503)
+
+
+# ======================================================================
+#  Media proxy — يحلّ مشكلة hotlink-protection على fbcdn و scontent
+#  وي خلي الصور/الفيديوهات تظهر داخل المنصة بدل ما المتصفح يطلبها مباشرة.
+# ======================================================================
+import urllib.request
+import urllib.error
+from urllib.parse import urlparse
+
+_ALLOWED_MEDIA_HOSTS = (
+    "fbcdn.net", "scontent.", "video.", "fb.com", "facebook.com",
+    "feedly.com", "feedburner.com", "rss.app", "rsshub.app",
+    "fetchrss.com", "scdn.co", "ytimg.com", "youtube.com",
+)
+
+
+@app.route("/api/media-proxy", methods=["GET"])
+@login_required
+def api_media_proxy():
+    """
+    Proxy لصور/فيديوهات خارجية (مع تحقق من الـ host لمنع SSRF).
+    استخدام:  /api/media-proxy?u=<encoded-url>
+    """
+    raw_url = request.args.get("u", "").strip()
+    if not raw_url:
+        return jsonify({"error": "u parameter required"}), 400
+
+    try:
+        parsed = urlparse(raw_url)
+    except Exception:
+        return jsonify({"error": "invalid URL"}), 400
+
+    if parsed.scheme not in ("http", "https"):
+        return jsonify({"error": "only http/https allowed"}), 400
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return jsonify({"error": "no host"}), 400
+
+    # whitelist للـ hosts (لمنع SSRF و proxy abuse)
+    if not any(allowed in host for allowed in _ALLOWED_MEDIA_HOSTS):
+        return jsonify({"error": f"host not in allowlist: {host}"}), 403
+
+    # local/internal addresses block
+    if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+        return jsonify({"error": "local hosts blocked"}), 403
+
+    try:
+        req = urllib.request.Request(
+            raw_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Marsad Media Proxy)",
+                "Accept": "image/*,video/*,*/*",
+                "Referer": "https://www.facebook.com/",
+            }
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            content_type = resp.headers.get("Content-Type", "application/octet-stream")
+            data = resp.read()
+            flask_resp = make_response(data)
+            flask_resp.headers["Content-Type"] = content_type
+            flask_resp.headers["Cache-Control"] = "public, max-age=3600"
+            flask_resp.headers["X-Proxied-By"] = "marsad"
+            return flask_resp
+    except urllib.error.HTTPError as e:
+        return jsonify({"error": f"upstream {e.code}"}), e.code
+    except Exception as e:
+        return jsonify({"error": str(e)[:200]}), 502
 
 
 # ======================================================================

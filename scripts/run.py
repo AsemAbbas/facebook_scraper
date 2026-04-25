@@ -34,19 +34,13 @@ except ImportError:
 
 from scrapers.base import BaseScraper, UnifiedPost, SourceUnavailableError
 from scrapers.apify_source import ApifySource
-from scrapers.fetchrss_source import FetchRSSSource
-from scrapers.rssapp_source import RSSAppSource
-from scrapers.rsshub_source import RSSHubSource
-from scrapers.playwright_source import PlaywrightSource
+from scrapers.rss_source import RSSSource
 
 
 # خريطة أسماء المصادر لـ classes
 SOURCE_REGISTRY: dict[str, type[BaseScraper]] = {
     "apify": ApifySource,
-    "fetchrss": FetchRSSSource,
-    "rssapp": RSSAppSource,
-    "rsshub": RSSHubSource,
-    "playwright": PlaywrightSource,
+    "rss":   RSSSource,
 }
 
 

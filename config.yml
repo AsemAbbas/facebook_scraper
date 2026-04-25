@@ -36,48 +36,12 @@ sources:
     include_videos: true                # تحميل روابط الفيديو
     include_external_links: true        # روابط خارجية في المنشور
 
-  # 🪶 FetchRSS - الأرخص ($9.95/شهر - Advanced plan)
-  # https://fetchrss.com
-  # ⚠️ بدون تفاعلات، تحديث كل 3-6 ساعات
-  - name: fetchrss
-    enabled: false
+  # 📡 RSS / Atom - أي رابط feed (مجاني، بدون token)
+  # المنصة الآن تدعم مصدرين فقط: apify (لفيسبوك) و rss (لأي feed خارجي)
+  - name: rss
+    enabled: true
     priority: 2
-    api_key: ${FETCHRSS_API_KEY}
-    base_url: "https://fetchrss.com/rss"
-
-  # ⚡ RSS.app - متوسط ($16.64/شهر - Developer plan)
-  # https://rss.app
-  # ⚠️ بدون تفاعلات، لكن تحديث أسرع
-  - name: rssapp
-    enabled: false
-    priority: 3
-    api_key: ${RSSAPP_API_KEY}
-    base_url: "https://api.rss.app/v1"
-
-  # 🏠 RSSHub - مجاني (self-hosted) أو $5/شهر VPS
-  # https://docs.rsshub.app
-  # ✅ مفتوح المصدر، لا حدود للعدد
-  - name: rsshub
-    enabled: false
-    priority: 4
-    base_url: "https://rsshub.app"  # أو URL الخاص بك
-    access_key: ${RSSHUB_ACCESS_KEY}  # اختياري
-
-  # 🆓 Playwright - مجاني لكن غير موثوق
-  # يعمل على GitHub Actions مجاناً لكن Facebook ممكن يحظره
-  - name: playwright
-    enabled: true   # المصدر الافتراضي للتجربة
-    priority: 5
-    headless: true
-    scroll_pause_seconds: 2.5
-    user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    use_mbasic: false
-    extract_all_media: true             # كل صور/فيديو، مش بس أول واحد
-    extract_external_links: true        # روابط خارجية في المنشور
-    browser_args:
-      - "--disable-blink-features=AutomationControlled"
-      - "--no-sandbox"
-      - "--disable-dev-shm-usage"
+    timeout_seconds: 30
 
 # ---------------------------------------------------------------------
 # 🎯 خيارات السحب العامة (مطبقة على كل المصادر)

@@ -130,11 +130,8 @@
     <label class="filter-label">المصدر</label>
     <select id="sourceFilter" class="select">
       <option value="all">كل المصادر</option>
-      <option value="apify">💎 Apify</option>
-      <option value="fetchrss">🪶 FetchRSS</option>
-      <option value="rssapp">⚡ RSS.app</option>
-      <option value="rsshub">🏠 RSSHub</option>
-      <option value="playwright">🎭 Playwright</option>
+      <option value="apify">💎 Apify (فيسبوك)</option>
+      <option value="rss">📡 RSS</option>
     </select>
   </div>
   <div class="filter-group">
@@ -218,13 +215,22 @@
   </div>
 </div>
 
+<!-- View tabs: Posts | Analytics -->
+<div class="view-tabs">
+  <button class="view-tab active" data-view="posts">📝 المنشورات</button>
+  <button class="view-tab" data-view="analytics">📊 الإحصاءات والتحليلات</button>
+</div>
+
 <!-- Posts grid -->
-<main class="posts-grid" id="postsGrid">
+<main class="posts-grid view-pane" id="postsGrid" data-view="posts">
   <div class="loading">
     <div class="spinner"></div>
     <p>جاري التحميل…</p>
   </div>
 </main>
+
+<!-- Analytics (full page, uses the same filters at the top) -->
+<main class="analytics-view view-pane" id="analyticsView" data-view="analytics" hidden></main>
 
 <!-- Simple footer -->
 <footer class="footer-simple">

@@ -86,6 +86,7 @@ async function init() {
   restoreFilters();
   setupListeners();
   setupPostManagement();
+  bindViewTabs();
   applyFilters();
 
   pollLiveRuns();
@@ -239,7 +240,7 @@ function openClearAllModal() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'فشل');
       const detail = d.removed > 0
-        ? `✅ حُذف ${d.removed} منشور مكرّر (${d.by_url} برابط مطابق، ${d.by_text} بنص مطابق). المتبقي: ${d.remaining}`
+        ? `✅ حُذف ${d.removed} منشور مكرّر (${d.by_id || 0} بنفس الـID، ${d.by_url} برابط مطابق، ${d.by_text} بنص مطابق). المتبقي: ${d.remaining}`
         : '✅ لا يوجد منشورات مكرّرة — كل المنشورات فريدة';
       showToast(detail, 'success');
       closeModal();
@@ -656,6 +657,8 @@ function applyFilters() {
   saveFilters();
   updateStats();   // refresh the top stat cards to reflect the filtered subset
   renderPosts();
+  // لو المستخدم في analytics view → جدّد الإحصائيات أيضاً
+  if (STATE.currentView === 'analytics') renderAnalyticsView();
 }
 
 function saveFilters() {
@@ -758,13 +761,15 @@ function renderPosts() {
     const hasVideo = !!post.video_url || media.some(m => m.type === 'video');
     const imageHtml = primaryImage
       ? `<div class="post-image ${hasVideo ? 'has-video' : ''}">
-           <img src="${escapeHtml(primaryImage)}" alt="" loading="lazy" onerror="this.parentElement.remove()">
+           <img src="${escapeHtml(proxyMediaUrl(primaryImage))}" alt="" loading="lazy" onerror="this.parentElement.remove()">
            ${hasVideo ? '<span class="play-overlay" aria-hidden="true"></span>' : ''}
            ${mediaCount > 1 ? `<span class="media-count-chip">+${mediaCount - 1}</span>` : ''}
          </div>`
       : '';
     const typeIcon = postTypeIcon(post.post_type);
     const hasComments = (post.comments_data || []).length > 0;
+
+    const typeBadge = postTypeBadge(post.post_type || 'text');
 
     return `
       <article class="post-card clickable" data-post-id="${escapeHtml(post.post_id)}" data-post-slug="${escapeHtml(post.page_slug)}" data-post-internal="${post.id || ''}" style="animation-delay: ${Math.min(i * 30, 600)}ms">
@@ -773,9 +778,10 @@ function renderPosts() {
         </div>
         <button class="btn-delete-post" title="حذف هذا المنشور" type="button">×</button>
         <div class="post-header">
-          <div class="post-page">${typeIcon}${escapeHtml(post.page_name)}</div>
+          <div class="post-page">${escapeHtml(post.page_name)}</div>
           <div class="post-time">${formatTime(post.timestamp_text, post.published_at || post.scraped_at)}</div>
         </div>
+        <div class="post-meta-row">${typeBadge}${sourceBadge}</div>
         ${imageHtml}
         <div class="post-text">${escapeHtml(post.text || '')}</div>
         ${mediaCount > 1 && !primaryImage ? `<div class="post-media-count">${mediaCount} ملف ميديا</div>` : ''}
@@ -795,7 +801,6 @@ function renderPosts() {
               ⊘ بدون تفاعلات
             </div>
           `}
-          ${sourceBadge}
           <span class="post-detail-hint">انقر للتفاصيل ↓</span>
         </div>
       </article>
@@ -851,18 +856,34 @@ function postTypeIcon(type) {
     link: '🔗 ',
     live: '🔴 ',
     event: '📅 ',
+    text: '📝 ',
   };
-  return icons[type] || '';
+  return icons[type] || '📝 ';
+}
+
+function postTypeBadge(type) {
+  const badges = {
+    video: { icon: '🎥', label: 'فيديو',  cls: 'video' },
+    photo: { icon: '🖼',  label: 'صورة',   cls: 'photo' },
+    link:  { icon: '🔗', label: 'رابط',   cls: 'link' },
+    live:  { icon: '🔴', label: 'مباشر',  cls: 'live' },
+    event: { icon: '📅', label: 'فعالية', cls: 'event' },
+    text:  { icon: '📝', label: 'نص',    cls: 'text' },
+  };
+  const b = badges[type] || badges.text;
+  return `<span class="post-type-badge ${b.cls}" title="نوع المنشور: ${b.label}">${b.icon} ${b.label}</span>`;
 }
 
 function renderSourceBadge(source) {
   if (!source || source === 'unknown') return '';
   const badges = {
-    apify:      { icon: '💎', label: 'Apify',     className: 'premium' },
-    fetchrss:   { icon: '🪶', label: 'FetchRSS',  className: 'rss' },
-    rssapp:     { icon: '⚡', label: 'RSS.app',   className: 'rss' },
-    rsshub:     { icon: '🏠', label: 'RSSHub',    className: 'rss' },
-    playwright: { icon: '🎭', label: 'Playwright',className: 'local' },
+    apify: { icon: '💎', label: 'Apify', className: 'premium' },
+    rss:   { icon: '📡', label: 'RSS',   className: 'rss' },
+    // legacy badges (لمنشورات قديمة قبل التبسيط)
+    fetchrss:   { icon: '📡', label: 'RSS', className: 'rss' },
+    rssapp:     { icon: '📡', label: 'RSS', className: 'rss' },
+    rsshub:     { icon: '📡', label: 'RSS', className: 'rss' },
+    playwright: { icon: '🎭', label: 'Playwright', className: 'local' },
   };
   const b = badges[source];
   if (!b) return '';
@@ -944,6 +965,19 @@ function ensureFullFbUrl(url) {
   }
   // Probably a relative path without leading /
   return 'https://www.facebook.com/' + url;
+}
+
+/**
+ * يلف رابط ميديا (صور/فيديوهات) بـ proxy داخلي عشان يشتغل من داخل المنصة
+ * بدون أن يبلوكه fbcdn (الذي يرفض requests من domains خارجية).
+ */
+function proxyMediaUrl(url) {
+  if (!url) return '';
+  const u = String(url).trim();
+  if (!u || u.startsWith('data:') || u.startsWith('blob:')) return u;
+  // proxy فقط الـ media الخارجية - لو الـ url داخلي خله يعدي
+  if (u.startsWith('/') && !u.startsWith('//')) return u;
+  return '/api/media-proxy?u=' + encodeURIComponent(u);
 }
 
 function escapeHtml(s) {
@@ -1646,12 +1680,9 @@ function renderPageRow(page, index) {
           <div class="form-row">
             <label class="filter-label">المصدر</label>
             <select class="select page-source">
-              <option value="auto" ${(page.source || 'auto') === 'auto' ? 'selected' : ''}>تلقائي</option>
-              <option value="apify" ${page.source === 'apify' ? 'selected' : ''}>💎 Apify</option>
-              <option value="fetchrss" ${page.source === 'fetchrss' ? 'selected' : ''}>🪶 FetchRSS</option>
-              <option value="rssapp" ${page.source === 'rssapp' ? 'selected' : ''}>⚡ RSS.app</option>
-              <option value="rsshub" ${page.source === 'rsshub' ? 'selected' : ''}>🏠 RSSHub</option>
-              <option value="playwright" ${page.source === 'playwright' ? 'selected' : ''}>🎭 Playwright</option>
+              <option value="auto" ${(page.source || 'auto') === 'auto' ? 'selected' : ''}>تلقائي (حسب الرابط)</option>
+              <option value="apify" ${page.source === 'apify' ? 'selected' : ''}>💎 Apify (فيسبوك)</option>
+              <option value="rss" ${page.source === 'rss' ? 'selected' : ''}>📡 RSS</option>
             </select>
           </div>
         </div>
@@ -2080,27 +2111,45 @@ function openPostDetailModal(post) {
   const externalLinks = post.external_links || [];
   const sourceBadge = renderSourceBadge(post.source);
 
-  // عرض كل الميديا
+  // عرض كل الميديا - الفيديو يشتغل داخل المنصة بـ <video controls>
+  // والصور لها lightbox onclick
+  const renderMediaItem = (m) => {
+    const url = m.url || '';
+    const proxied = proxyMediaUrl(url);
+    if (m.type === 'video') {
+      return `
+        <div class="media-item video-inline">
+          <video controls preload="metadata" playsinline
+                 ${m.thumbnail ? `poster="${escapeHtml(proxyMediaUrl(m.thumbnail))}"` : ''}>
+            <source src="${escapeHtml(proxied)}">
+            متصفحك لا يدعم تشغيل الفيديو.
+          </video>
+        </div>
+      `;
+    }
+    return `
+      <a href="${escapeHtml(proxied)}" target="_blank" rel="noopener" class="media-item"
+         data-lightbox="${escapeHtml(proxied)}">
+        <img src="${escapeHtml(proxied)}" alt="" loading="lazy"
+             onerror="this.parentElement.classList.add('broken')">
+      </a>
+    `;
+  };
+
   const mediaHtml = media.length
     ? `<div class="detail-section">
          <h3>📎 الميديا (${media.length})</h3>
          <div class="detail-media-grid">
-           ${media.map(m => m.type === 'video'
-             ? `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener" class="media-item video">
-                  <span>🎥</span><span>فيديو</span>
-                </a>`
-             : `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener" class="media-item">
-                  <img src="${escapeHtml(m.url)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('broken')">
-                </a>`
-           ).join('')}
+           ${media.map(renderMediaItem).join('')}
          </div>
        </div>`
     : (post.image_url
       ? `<div class="detail-section">
            <h3>📎 الميديا</h3>
            <div class="detail-media-grid">
-             <a href="${escapeHtml(post.image_url)}" target="_blank" rel="noopener" class="media-item">
-               <img src="${escapeHtml(post.image_url)}" alt="" loading="lazy">
+             <a href="${escapeHtml(proxyMediaUrl(post.image_url))}" target="_blank" rel="noopener" class="media-item"
+                data-lightbox="${escapeHtml(proxyMediaUrl(post.image_url))}">
+               <img src="${escapeHtml(proxyMediaUrl(post.image_url))}" alt="" loading="lazy">
              </a>
            </div>
          </div>` : '');
@@ -2291,11 +2340,25 @@ function reactionIcon(key) {
 // ========= Analytics Dashboard =========
 
 function openAnalyticsModal() {
-  const posts = STATE.allPosts;
+  // الزر القديم في القائمة الآن يبدّل لـ analytics view
+  switchView('analytics');
+}
+
+function renderAnalyticsView() {
+  const pane = document.getElementById('analyticsView');
+  if (!pane) return;
+
+  // استخدم المنشورات المفلترة لو في فلتر نشط، وإلا الكل
+  const posts = (Array.isArray(STATE.filtered) && STATE.filtered.length !== STATE.allPosts.length)
+    ? STATE.filtered
+    : STATE.allPosts;
+
   if (!posts.length) {
-    openModal('📊 الإحصاءات والتحليلات', '<p class="note-empty">لا توجد بيانات للتحليل بعد.</p>', 'lg');
+    pane.innerHTML = '<div class="empty"><p>لا توجد بيانات للتحليل بعد. اسحب منشورات أولاً.</p></div>';
     return;
   }
+
+  const isFiltered = posts !== STATE.allPosts;
 
   // إحصاءات شاملة
   const totalReactions = posts.reduce((s, p) => s + (p.reactions || 0), 0);
@@ -2359,8 +2422,12 @@ function openAnalyticsModal() {
   });
   const topTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
 
-  openModal('📊 الإحصاءات والتحليلات', `
+  pane.innerHTML = `
     <div class="analytics-wrapper">
+      <div class="analytics-header">
+        <h2>📊 الإحصاءات والتحليلات${isFiltered ? ' <span class="filter-chip">🔍 نتائج الفلتر</span>' : ''}</h2>
+        <p class="analytics-sub">${isFiltered ? 'الأرقام تعكس الفلاتر النشطة في الأعلى. عدّل الفلاتر وسيتم تحديث الإحصائيات.' : 'الأرقام لكل المنشورات. استخدم الفلاتر في الأعلى لتضييق النطاق.'}</p>
+      </div>
       <div class="analytics-grid">
         <div class="analytics-card">
           <div class="analytics-num">${formatNum(posts.length)}</div>
@@ -2492,18 +2559,43 @@ function openAnalyticsModal() {
         </div>
       ` : ''}
     </div>
-  `, 'lg');
+  `;
 
-  // Click على top post
-  document.querySelectorAll('.top-post-row').forEach(row => {
+  // Click على top post → افتح detail modal بدون تبديل view
+  pane.querySelectorAll('.top-post-row').forEach(row => {
     row.addEventListener('click', () => {
       const post = STATE.allPosts.find(p => p.post_id === row.dataset.postId && p.page_slug === row.dataset.postSlug);
-      if (post) {
-        closeModal();
-        setTimeout(() => openPostDetailModal(post), 250);
-      }
+      if (post) openPostDetailModal(post);
     });
   });
+}
+
+// ========= View switching (Posts | Analytics) =========
+
+function switchView(view) {
+  STATE.currentView = view;
+  document.querySelectorAll('.view-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.view === view);
+  });
+  document.querySelectorAll('.view-pane').forEach(p => {
+    p.hidden = p.dataset.view !== view;
+  });
+  if (view === 'analytics') {
+    renderAnalyticsView();
+  }
+  // حفظ في localStorage عشان الـ view يتذكّر
+  try { localStorage.setItem('marsad_view', view); } catch {}
+}
+
+function bindViewTabs() {
+  document.querySelectorAll('.view-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchView(tab.dataset.view));
+  });
+  // Restore last view
+  try {
+    const saved = localStorage.getItem('marsad_view');
+    if (saved === 'analytics') switchView('analytics');
+  } catch {}
 }
 
 // ========= Settings Modal =========
@@ -3867,12 +3959,8 @@ function setupListeners() {
     });
   }
 
-  // Modal
+  // Modal — يُغلق فقط بزر × أو Escape، النقر خارجه لا يغلقه
   els.modalClose.addEventListener('click', closeModal);
-  els.modal.addEventListener('click', (e) => {
-    if (e.target === els.modal) closeModal();
-  });
-
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && els.modal.classList.contains('active')) {
       closeModal();
