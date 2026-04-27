@@ -1070,6 +1070,49 @@ function ensureUniqueSlug(slug, existingSlugs) {
   return unique;
 }
 
+/**
+ * يطبّع رابط الصفحة عشان نتعرف على التكرار حتى لو الـ URL كُتب بصور مختلفة.
+ * "https://www.facebook.com/PalestineTV/posts/abc?ref=xyz" →
+ * "facebook.com/palestinetv"
+ */
+function normalizePageKey(url) {
+  if (!url) return '';
+  let u = String(url).trim().toLowerCase();
+  // أزل query/hash
+  u = u.split('?')[0].split('#')[0];
+  // ابدأ من scheme لو موجود
+  u = u.replace(/^https?:\/\//, '');
+  // وحّد فيسبوك subdomains
+  u = u.replace(/^(www\.|m\.|mbasic\.|web\.)/, '');
+  u = u.replace(/^facebook\.com/, 'facebook.com');
+  // أزل trailing slash + posts/pfbid... (نهتم بالصفحة فقط)
+  u = u.split('/posts/')[0];
+  u = u.split('/videos/')[0];
+  u = u.split('/photos/')[0];
+  u = u.replace(/\/+$/, '');
+  return u;
+}
+
+/**
+ * يفحص هل الصفحة موجودة بالفعل في القائمة.
+ * يقارن بالـ slug، الـ URL المُطبَّع، أو الاسم (case-insensitive).
+ * يرجع index الصفحة الموجودة، أو -1.
+ */
+function findDuplicatePageIndex(page, list, ignoreIndex = -1) {
+  const newKey = normalizePageKey(page.url);
+  const newSlug = (page.slug || '').toLowerCase();
+  const newName = (page.name || '').trim().toLowerCase();
+
+  for (let i = 0; i < list.length; i++) {
+    if (i === ignoreIndex) continue;
+    const p = list[i];
+    if (newSlug && (p.slug || '').toLowerCase() === newSlug) return i;
+    if (newKey && normalizePageKey(p.url) === newKey) return i;
+    if (newName && (p.name || '').trim().toLowerCase() === newName && newName.length >= 3) return i;
+  }
+  return -1;
+}
+
 function showToast(msg, type = '') {
   document.querySelectorAll('.toast').forEach(t => t.remove());
   const toast = document.createElement('div');
@@ -1649,6 +1692,21 @@ function openPagesModal() {
         <button class="btn-refresh btn-sm" id="downloadPagesTemplate" type="button" title="تحميل قالب CSV فاضي">📋 قالب CSV</button>
       </div>
 
+      <div class="pages-search-bar">
+        <div class="pages-search-input-wrap">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input type="text" id="pagesSearch" class="input" placeholder="ابحث بالاسم، الرابط، أو المدينة…" autocomplete="off">
+          <button class="pages-search-clear" id="pagesSearchClear" type="button" title="مسح البحث" hidden>×</button>
+        </div>
+        <div class="pages-toolbar-secondary">
+          <span class="pages-count" id="pagesCount">${pages.length} صفحة</span>
+          <button class="btn-refresh btn-sm" id="expandAllPagesBtn" type="button" title="فتح الكل">⤓ افتح الكل</button>
+          <button class="btn-refresh btn-sm" id="collapseAllPagesBtn" type="button" title="طي الكل">⤒ طوِ الكل</button>
+        </div>
+      </div>
+
       <div class="pages-list" id="pagesList">
         ${pages.length === 0
           ? `<div class="empty-state">
@@ -1678,18 +1736,47 @@ function openPagesModal() {
 }
 
 function renderPageRow(page, index) {
+  // محتوى صفّ الـ search (للفلترة client-side بدون إعادة render)
+  const searchBlob = [
+    page.name || '', page.url || '', page.city || '', page.slug || ''
+  ].join(' ').toLowerCase();
+
+  // مصدر سيُستخدَم (للعرض في الـ summary)
+  const srcGuess = page.source && page.source !== 'auto'
+    ? page.source
+    : ((page.url || '').toLowerCase().match(/facebook\.com|fb\.com/) ? 'apify' : 'rss');
+  const srcIcon = srcGuess === 'apify' ? '💎' : '📡';
+  const srcLabel = srcGuess === 'apify' ? 'فيسبوك (Apify)' : 'RSS';
+
   return `
-    <div class="page-row" data-index="${index}" data-slug="${escapeHtml(page.slug || '')}">
-      <div class="page-row-head">
-        <label class="switch">
+    <div class="page-row" data-index="${index}" data-slug="${escapeHtml(page.slug || '')}" data-search="${escapeHtml(searchBlob)}">
+      <div class="page-row-head" role="button" tabindex="0">
+        <label class="switch" onclick="event.stopPropagation()">
           <input type="checkbox" class="page-enabled" ${page.enabled !== false ? 'checked' : ''}>
           <span class="slider"></span>
         </label>
-        <input type="text" class="input page-name" placeholder="اسم الصفحة (مثل: قناة الجزيرة)" value="${escapeHtml(page.name || '')}">
-        ${STATE.hasBackend ? `<button class="btn-icon-sm btn-test page-test-btn" title="اختبر السحب" type="button">🧪</button>` : ''}
-        <button class="btn-icon-sm btn-danger page-delete" title="حذف" type="button">×</button>
+        <div class="page-row-summary">
+          <strong class="page-row-name">${escapeHtml(page.name || '(بدون اسم)')}</strong>
+          <div class="page-row-meta">
+            <span class="page-meta-source" title="المصدر">${srcIcon} ${srcLabel}</span>
+            ${page.city ? `<span class="page-meta-city">📍 ${escapeHtml(page.city)}</span>` : ''}
+            ${page.followers ? `<span class="page-meta-followers">👥 ${formatNum(page.followers)}</span>` : ''}
+            <span class="page-meta-max">🎯 ${page.max_posts || 30}</span>
+          </div>
+        </div>
+        ${STATE.hasBackend ? `<button class="btn-icon-sm btn-test page-test-btn" title="اختبر السحب" type="button" onclick="event.stopPropagation()">🧪</button>` : ''}
+        <button class="btn-icon-sm btn-danger page-delete" title="حذف" type="button" onclick="event.stopPropagation()">×</button>
+        <button class="btn-icon-sm page-collapse-btn" type="button" aria-label="توسيع/طي" tabindex="-1">
+          <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
       </div>
-      <div class="page-row-body">
+      <div class="page-row-body" hidden>
+        <div class="form-row">
+          <label class="filter-label">اسم الصفحة</label>
+          <input type="text" class="input page-name" placeholder="اسم الصفحة (مثل: قناة الجزيرة)" value="${escapeHtml(page.name || '')}">
+        </div>
         <div class="form-row">
           <label class="filter-label">رابط الصفحة (Page Link)</label>
           <input type="text" class="input page-url" placeholder="https://www.facebook.com/..." value="${escapeHtml(page.url || '')}" dir="ltr">
@@ -1728,14 +1815,99 @@ function renderPageRow(page, index) {
 }
 
 function bindPagesManagerEvents() {
+  // ===== Search filter (client-side) =====
+  const searchInput = document.getElementById('pagesSearch');
+  const searchClear = document.getElementById('pagesSearchClear');
+  const pagesCountEl = document.getElementById('pagesCount');
+
+  function applyPagesSearch() {
+    const q = (searchInput?.value || '').trim().toLowerCase();
+    const rows = document.querySelectorAll('#pagesList .page-row');
+    let visible = 0;
+    rows.forEach(r => {
+      const blob = r.dataset.search || '';
+      const match = !q || blob.includes(q);
+      r.hidden = !match;
+      if (match) visible++;
+    });
+    if (pagesCountEl) {
+      pagesCountEl.textContent = q
+        ? `${visible} من ${rows.length} صفحة`
+        : `${rows.length} صفحة`;
+    }
+    if (searchClear) searchClear.hidden = !q;
+  }
+  if (searchInput) {
+    searchInput.addEventListener('input', applyPagesSearch);
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { searchInput.value = ''; applyPagesSearch(); }
+    });
+  }
+  if (searchClear) {
+    searchClear.addEventListener('click', () => {
+      if (searchInput) searchInput.value = '';
+      applyPagesSearch();
+      searchInput?.focus();
+    });
+  }
+
+  // ===== Expand/collapse =====
+  document.querySelectorAll('#pagesList .page-row-head').forEach(head => {
+    const toggle = (e) => {
+      if (e.target.closest('input, button, .switch')) return;
+      const row = head.closest('.page-row');
+      row.classList.toggle('expanded');
+      const body = row.querySelector('.page-row-body');
+      if (body) body.hidden = !row.classList.contains('expanded');
+      const chev = row.querySelector('.chev');
+      if (chev) chev.style.transform = row.classList.contains('expanded') ? 'rotate(180deg)' : '';
+    };
+    head.addEventListener('click', toggle);
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
+    });
+  });
+
+  document.getElementById('expandAllPagesBtn')?.addEventListener('click', () => {
+    document.querySelectorAll('#pagesList .page-row').forEach(r => {
+      r.classList.add('expanded');
+      const body = r.querySelector('.page-row-body');
+      if (body) body.hidden = false;
+      const chev = r.querySelector('.chev');
+      if (chev) chev.style.transform = 'rotate(180deg)';
+    });
+  });
+  document.getElementById('collapseAllPagesBtn')?.addEventListener('click', () => {
+    document.querySelectorAll('#pagesList .page-row').forEach(r => {
+      r.classList.remove('expanded');
+      const body = r.querySelector('.page-row-body');
+      if (body) body.hidden = true;
+      const chev = r.querySelector('.chev');
+      if (chev) chev.style.transform = '';
+    });
+  });
+
   document.getElementById('addPageBtn').addEventListener('click', () => {
     syncPagesFromUI();
     STATE.pagesConfig.push({
       slug: '', name: '', url: '',
       max_posts: 30, source: 'auto', enabled: true,
       city: '', followers: 0,
+      _newlyAdded: true,   // فُتح تلقائياً بعد render
     });
     openPagesModal();
+    // اطلق tab الـ new (يُفتح تلقائياً)
+    setTimeout(() => {
+      const newRow = document.querySelector('.page-row:last-child');
+      if (newRow) {
+        newRow.classList.add('expanded');
+        newRow.querySelector('.page-row-body').hidden = false;
+        const chev = newRow.querySelector('.chev');
+        if (chev) chev.style.transform = 'rotate(180deg)';
+        newRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        newRow.querySelector('.page-name')?.focus();
+      }
+    }, 50);
   });
 
   document.querySelectorAll('.page-delete').forEach(btn => {
@@ -1786,42 +1958,53 @@ function bindPagesManagerEvents() {
           showToast('لم يتم العثور على صفحات في الملف', 'error');
           return;
         }
-        // Merge by slug — overwrites existing, adds new.
-        // نضمن uniqueness عبر الموجود + المُستورد لأن الأسماء العربية
-        // قد تنتج نفس الـ slug من الـ URL.
+
+        // عدّ تكرار داخل الملف نفسه (لو CSV فيه نفس الصفحة مرتين)
+        const seenInFile = [];
+
         const usedSlugs = new Set(
           STATE.pagesConfig.map(p => p.slug || slugify(p.name, p.url)).filter(Boolean)
         );
-        const existing = new Map();
-        STATE.pagesConfig.forEach(p => {
-          const k = p.slug || slugify(p.name, p.url);
-          if (k) existing.set(k, p);
-        });
 
-        let added = 0, updated = 0, skipped = 0;
+        let added = 0, updated = 0, skippedNoUrl = 0, skippedDup = 0;
+
         for (const p of pages) {
-          if (!p.url) { skipped++; continue; }
+          if (!p.url) { skippedNoUrl++; continue; }
 
-          // أعد توليد slug من الاسم + URL لو ما حدد المستخدم slug
-          let slug = (p.slug || '').trim();
-          if (!slug) slug = slugify(p.name, p.url);
+          // نفس الصفحة مكررة داخل ملف الاستيراد نفسه → نأخذ آخر نسخة فقط
+          const inFileIdx = findDuplicatePageIndex(p, seenInFile);
+          if (inFileIdx !== -1) {
+            seenInFile[inFileIdx] = p;   // overwrite (last wins)
+            continue;
+          }
+          seenInFile.push(p);
+        }
 
-          if (existing.has(slug)) {
-            // نفس الـ slug موجود → تحديث (overwrite)
-            Object.assign(existing.get(slug), p, { slug });
+        for (const p of seenInFile) {
+          // هل هي موجودة بالفعل في الـ STATE؟
+          const existingIdx = findDuplicatePageIndex(p, STATE.pagesConfig);
+          let slug = (p.slug || '').trim() || slugify(p.name, p.url);
+
+          if (existingIdx !== -1) {
+            // update — احتفظ بالـ slug الأصلي (ما نغيّره عشان ما نكسر علاقات قديمة)
+            const existing = STATE.pagesConfig[existingIdx];
+            Object.assign(existing, p, { slug: existing.slug || slug });
             updated++;
             continue;
           }
-          // slug جديد - تأكد إنه فريد عبر الـ batch بأكمله
+
+          // جديد - تأكد من uniqueness للـ slug
           slug = ensureUniqueSlug(slug, usedSlugs);
-          const newPage = { ...p, slug };
-          STATE.pagesConfig.push(newPage);
-          existing.set(slug, newPage);
+          STATE.pagesConfig.push({ ...p, slug });
           added++;
         }
+
+        skippedDup = pages.length - seenInFile.length;
         openPagesModal();
-        const skipMsg = skipped > 0 ? `، ${skipped} تم تخطيها (بدون رابط)` : '';
-        showToast(`✅ تم الاستيراد: ${added} جديدة، ${updated} محدّثة${skipMsg}`, 'success');
+        const parts = [`${added} جديدة`, `${updated} محدّثة`];
+        if (skippedDup > 0) parts.push(`${skippedDup} مكرّرة في الملف`);
+        if (skippedNoUrl > 0) parts.push(`${skippedNoUrl} بلا رابط`);
+        showToast(`✅ تم الاستيراد: ${parts.join('، ')}`, 'success');
       } catch (err) {
         showToast('خطأ في القراءة: ' + err.message, 'error');
       }
@@ -1964,8 +2147,12 @@ function syncPagesFromUI() {
     const index = parseInt(row.dataset.index);
     const page = STATE.pagesConfig[index];
     if (!page) return;
-    page.name = row.querySelector('.page-name').value.trim();
-    page.url = row.querySelector('.page-url').value.trim();
+    // الـ body قد يكون مطوي - الـ inputs موجودة لكن hidden. ما زالت تُقرأ.
+    const nameEl = row.querySelector('.page-name');
+    const urlEl = row.querySelector('.page-url');
+    if (!nameEl || !urlEl) return;
+    page.name = nameEl.value.trim();
+    page.url = urlEl.value.trim();
     let slug = row.querySelector('.page-slug').value.trim();
     if (!slug) slug = slugify(page.name, page.url);
     page.slug = slug;
@@ -1979,7 +2166,25 @@ function syncPagesFromUI() {
     delete page.date_to;
   });
 
-  // second pass: ensure slug uniqueness across the whole list (defense
+  // second pass: dedupe by URL/name (دمج التكرارات client-side قبل الإرسال).
+  // إذا في صفّين بنفس الـ URL أو الاسم، نحتفظ بأول واحد ونحذف الباقي.
+  const deduped = [];
+  const seenIdxs = [];
+  STATE.pagesConfig.forEach((p, i) => {
+    const dupIdx = findDuplicatePageIndex(p, deduped);
+    if (dupIdx === -1) {
+      deduped.push(p);
+      seenIdxs.push(i);
+    }
+    // التكرار يُتجاهل بصمت (الأول الذي وصل يفوز)
+  });
+  if (deduped.length !== STATE.pagesConfig.length) {
+    const removed = STATE.pagesConfig.length - deduped.length;
+    STATE.pagesConfig = deduped;
+    showToast(`⚠️ تم دمج ${removed} صفحة مكرّرة قبل الحفظ`, 'warn');
+  }
+
+  // third pass: ensure slug uniqueness across the whole list (defense
   // against duplicate slugs that would silently get DELETEd by upsert_pages).
   const usedSlugs = new Set();
   STATE.pagesConfig.forEach(p => {
