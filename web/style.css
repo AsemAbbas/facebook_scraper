@@ -2832,6 +2832,107 @@ button:active {
 }
 
 /* ================================================================
+   Pagination bar
+   ================================================================ */
+.pagination-bar {
+  max-width: 1400px;
+  margin: 1.25rem auto 1.5rem;
+  padding: 12px 1rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pg-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pg-pp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.select-sm {
+  padding: 4px 24px 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  font-size: 0.85rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.pg-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pg-btn {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s var(--ease);
+  font-variant-numeric: tabular-nums;
+}
+
+.pg-btn:hover:not(:disabled):not(.active) {
+  border-color: var(--accent-400);
+  color: var(--accent-700);
+  background: var(--accent-50);
+}
+
+.pg-btn.active {
+  background: linear-gradient(135deg, var(--accent-500), var(--accent-700));
+  color: white;
+  border-color: var(--accent-700);
+  box-shadow: 0 2px 6px -1px rgba(249,115,22,0.35);
+}
+
+.pg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pg-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  color: var(--text-muted);
+  font-size: 1rem;
+  user-select: none;
+}
+
+@media (max-width: 640px) {
+  .pagination-bar { padding: 10px; }
+  .pg-info { width: 100%; justify-content: space-between; }
+  .pg-controls { width: 100%; justify-content: center; flex-wrap: wrap; }
+  .pg-btn { min-width: 32px; height: 32px; padding: 0 8px; font-size: 0.8rem; }
+}
+
+/* ================================================================
    Multi-select dropdown filter component
    ================================================================ */
 .multiselect {
@@ -2894,12 +2995,23 @@ button:active {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
-  z-index: 100;
+  z-index: 5000;
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
   animation: ms-fade 0.15s ease;
+}
+
+/* رفع الـ stacking context للحاوي عند فتح dropdown
+   عشان ما يُغطّى من الـ .controls.advanced-row الذي يأتي بعده */
+.filter-group:has(.multiselect.open) {
+  position: relative;
+  z-index: 5000;
+}
+
+.controls:has(.multiselect.open) {
+  z-index: 5000;
 }
 
 @keyframes ms-fade {

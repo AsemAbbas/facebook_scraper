@@ -87,13 +87,20 @@ async function init() {
   renderUserMenu();
 
   await loadIndex();
+  await loadPagesConfig();   // يجب قبل loadAllPages عشان populate multiselect صح
   await loadAllPages();
-  await loadPagesConfig();
   await loadSourcesStatus();
   await loadHistory();
 
   setDefaultDateRange();
   restoreFilters();
+
+  // restore pagination prefs
+  try {
+    const pp = parseInt(localStorage.getItem('marsad_per_page'));
+    if (pp >= 12 && pp <= 200) STATE.perPage = pp;
+  } catch {}
+
   setupListeners();
   setupPostManagement();
   bindViewTabs();
@@ -445,6 +452,7 @@ async function loadPagesConfig() {
       const data = await res.json();
       STATE.pagesConfig = (data.pages || []).map(p => ({ ...p }));
       STATE.hasBackend = true;
+      _refreshPageFilterList();
       return;
     }
   } catch {}
@@ -458,6 +466,7 @@ async function loadPagesConfig() {
     if (ghRes.ok) {
       const data = await ghRes.json();
       STATE.pagesConfig = (data.pages || []).map(p => ({ ...p }));
+      _refreshPageFilterList();
       return;
     }
   } catch {}
@@ -467,6 +476,17 @@ async function loadPagesConfig() {
     slug: p.slug, name: p.name, url: p.url,
     max_posts: 30, source: 'auto', enabled: true,
   }));
+  _refreshPageFilterList();
+}
+
+function _refreshPageFilterList() {
+  // قد يكون الـ DOM لسا مش جاهز لما يُستدعى من loadPagesConfig في init
+  // لذلك نتحقق ونتجاهل بأمان لو العنصر مش موجود.
+  const list = document.getElementById('pageFilterList');
+  if (list) {
+    populatePageFilterMultiselect();
+    syncMultiselectCheckboxesFromState();
+  }
 }
 
 async function detectBackend() {
@@ -698,6 +718,8 @@ function applyFilters() {
   }
 
   saveFilters();
+  // إعادة تعيين رقم الصفحة عند تغيير الفلاتر (يبدأ من 1)
+  STATE.currentPage = 1;
   updateStats();   // refresh the top stat cards to reflect the filtered subset
   renderPosts();
   // لو المستخدم في analytics view → جدّد الإحصائيات أيضاً
@@ -962,17 +984,31 @@ function renderPosts() {
 
   if (posts.length === 0) {
     showEmpty('لا توجد نتائج تطابق الفلاتر الحالية');
+    _renderPagination(0, 1, 24);
     return;
   }
+
+  // Pagination
+  const perPage = STATE.perPage || 24;
+  const total = posts.length;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  // Clamp current page to valid range (إذا تغيّرت الفلاتر بعد ما كان المستخدم في صفحة آخيرة)
+  if (!STATE.currentPage || STATE.currentPage > totalPages) STATE.currentPage = 1;
+  if (STATE.currentPage < 1) STATE.currentPage = 1;
+  const page = STATE.currentPage;
+  const start = (page - 1) * perPage;
+  const slice = posts.slice(start, start + perPage);
 
   // طبقّ layout view (cards / list) من STATE
   const layout = STATE.postsLayout || 'cards';
   els.postsGrid.classList.toggle('layout-list', layout === 'list');
   els.postsGrid.classList.toggle('layout-cards', layout !== 'list');
 
-  els.postsGrid.innerHTML = posts.slice(0, 100).map((post, i) =>
+  els.postsGrid.innerHTML = slice.map((post, i) =>
     layout === 'list' ? renderPostListRow(post, i) : renderPostCard(post, i)
   ).join('');
+
+  _renderPagination(total, page, perPage);
 
   // Click handlers — يدعم card view و list view
   document.querySelectorAll('.post-card.clickable, .post-list-row.clickable').forEach(item => {
@@ -1015,6 +1051,97 @@ function renderPosts() {
       }
     });
   });
+}
+
+// ==================== Pagination ====================
+
+function _renderPagination(total, page, perPage) {
+  let bar = document.getElementById('postsPagination');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'postsPagination';
+    bar.className = 'pagination-bar';
+    // أدخله بعد الـ posts-grid
+    const grid = els.postsGrid;
+    if (grid && grid.parentNode) grid.parentNode.insertBefore(bar, grid.nextSibling);
+  }
+  if (total === 0) { bar.innerHTML = ''; return; }
+
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const start = (page - 1) * perPage + 1;
+  const end = Math.min(page * perPage, total);
+
+  // قائمة الصفحات اللازم عرضها (أول، الجوار، آخر)
+  const pages = _paginationPages(page, totalPages);
+
+  bar.innerHTML = `
+    <div class="pg-info">
+      <span>${start}–${end} من ${formatNum(total)}</span>
+      <div class="pg-pp">
+        <label>عدد لكل صفحة:</label>
+        <select id="pgPerPage" class="select-sm">
+          ${[12, 24, 48, 96, 200].map(n => `<option value="${n}" ${n === perPage ? 'selected' : ''}>${n}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="pg-controls">
+      <button class="pg-btn" data-pg="first" ${page === 1 ? 'disabled' : ''} title="الأولى">⏮</button>
+      <button class="pg-btn" data-pg="prev"  ${page === 1 ? 'disabled' : ''} title="السابق">‹</button>
+      ${pages.map(p => p === '...'
+        ? `<span class="pg-ellipsis">…</span>`
+        : `<button class="pg-btn ${p === page ? 'active' : ''}" data-pg="${p}">${p}</button>`
+      ).join('')}
+      <button class="pg-btn" data-pg="next" ${page === totalPages ? 'disabled' : ''} title="التالي">›</button>
+      <button class="pg-btn" data-pg="last" ${page === totalPages ? 'disabled' : ''} title="الأخيرة">⏭</button>
+    </div>
+  `;
+
+  // listeners
+  bar.querySelectorAll('.pg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const t = btn.dataset.pg;
+      let next = page;
+      if (t === 'first') next = 1;
+      else if (t === 'last') next = totalPages;
+      else if (t === 'prev') next = page - 1;
+      else if (t === 'next') next = page + 1;
+      else next = parseInt(t);
+      if (next >= 1 && next <= totalPages && next !== page) {
+        STATE.currentPage = next;
+        renderPosts();
+        // scroll إلى أعلى الـ grid
+        els.postsGrid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  });
+
+  const ppSelect = bar.querySelector('#pgPerPage');
+  if (ppSelect) {
+    ppSelect.addEventListener('change', () => {
+      STATE.perPage = parseInt(ppSelect.value) || 24;
+      try { localStorage.setItem('marsad_per_page', STATE.perPage); } catch {}
+      // حافظ على نفس المنشور المرئي (تقريباً)
+      const newTotalPages = Math.max(1, Math.ceil(total / STATE.perPage));
+      const firstVisibleIndex = (page - 1) * perPage;
+      STATE.currentPage = Math.min(newTotalPages, Math.floor(firstVisibleIndex / STATE.perPage) + 1);
+      renderPosts();
+    });
+  }
+}
+
+function _paginationPages(current, total) {
+  // يعرض: 1 ... (current-1) (current) (current+1) ... (total)
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const pages = [1];
+  if (current > 3) pages.push('...');
+  for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) {
+    pages.push(i);
+  }
+  if (current < total - 2) pages.push('...');
+  pages.push(total);
+  return pages;
 }
 
 // ==================== Post Card / List rendering ====================
@@ -5195,6 +5322,8 @@ function setupListeners() {
   // Filters
   // (page/source/postType + quick filters: handled inside multiselects)
   setupMultiselects();
+  // populate page list from STATE.pagesConfig (already loaded by init)
+  populatePageFilterMultiselect();
   // restore selection after multiselects are set up
   syncMultiselectCheckboxesFromState();
 
