@@ -2801,6 +2801,145 @@ button:active {
   50%      { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); }
 }
 
+/* Trigger modal: pages mode + quick presets */
+.trigger-pages-mode {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.radio-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: all 0.15s var(--ease);
+}
+
+.radio-chip:hover { border-color: var(--accent-400); }
+
+.radio-chip input[type="radio"] {
+  margin: 0;
+  accent-color: var(--accent-600);
+}
+
+.radio-chip:has(input:checked) {
+  background: var(--accent-50);
+  border-color: var(--accent-500);
+  color: var(--accent-700);
+}
+
+.trigger-pages-picker {
+  background: var(--ink-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.trigger-pages-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.trigger-pages-toolbar .input { flex: 1; min-width: 150px; }
+
+.trigger-pages-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.trig-page-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 0.85rem;
+}
+
+.trig-page-item:hover { background: var(--ink-50); }
+
+.trig-page-item input[type="checkbox"] {
+  accent-color: var(--accent-600);
+  margin: 0;
+}
+
+.trig-page-item .trig-page-name {
+  flex: 1;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trig-page-item .trig-page-city {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.trigger-pages-count {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-align: end;
+}
+
+/* Quick time presets */
+.time-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preset-btn {
+  padding: 8px 14px;
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: all 0.15s var(--ease);
+  white-space: nowrap;
+}
+
+.preset-btn:hover {
+  border-color: var(--accent-400);
+  background: var(--accent-50);
+}
+
+.preset-btn.active {
+  background: linear-gradient(135deg, var(--accent-500), var(--accent-600));
+  border-color: var(--accent-700);
+  color: white;
+  box-shadow: 0 2px 6px -1px rgba(249,115,22,0.3);
+}
+
 /* Locked config value (read-only) */
 .locked-value {
   display: inline-flex;

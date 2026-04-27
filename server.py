@@ -131,6 +131,22 @@ def _detect_source_for_url(url: str) -> str:
     return "rss"
 
 
+def _resolve_max_posts(page_value, date_from=None, date_to=None) -> int:
+    """
+    يحدد max_posts للسحب بناءً على إعدادات الصفحة:
+      - إذا max_posts على الصفحة محدد (>=1) → يستخدمه (الأولوية للصفحة)
+      - إذا فارغ/0/None → يستخدم كاب عالي (1000) عشان date_from/date_to
+        تتحكم بالنطاق. عملياً المصدر يرجع الأحدث ضمن التاريخ.
+    """
+    try:
+        n = int(page_value) if page_value not in (None, "", 0, "0") else 0
+    except (TypeError, ValueError):
+        n = 0
+    if n >= 1:
+        return min(n, 1000)
+    return 1000   # cap عالي - الفلترة بالتاريخ
+
+
 def _build_user_sources(user_id: int) -> dict:
     """
     يبني dict { source_name: instance } للمصادر المفعّلة لهذا المستخدم.
@@ -479,8 +495,18 @@ def api_scrape_start():
     data = request.get_json(silent=True) or {}
     job_uid = uuid.uuid4().hex[:12]
 
+    # نقبل: slug (واحدة) أو slugs (قائمة) أو "all" / فارغ → كل الصفحات
+    slugs_in = data.get("slugs")
+    if isinstance(slugs_in, list):
+        slugs = [str(s).strip() for s in slugs_in if str(s).strip()]
+    elif data.get("slug"):
+        slugs = [str(data["slug"]).strip()]
+    else:
+        slugs = []   # empty = all pages
+
     params = {
-        "slug": data.get("slug"),
+        "slug": data.get("slug"),       # legacy single-slug
+        "slugs": slugs,                  # new: list (empty = all)
         "source": data.get("source"),
         "date_from": data.get("date_from"),
         "date_to": data.get("date_to"),
@@ -536,11 +562,17 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
     try:
         pages_all = db.list_pages(user_id, only_enabled=True)
         slug = params.get("slug")
+        slugs = params.get("slugs") or []
         force_src = params.get("source")
         date_from = params.get("date_from")
         date_to = params.get("date_to")
 
-        if slug:
+        # فلترة على slug واحد (legacy) أو قائمة (الجديدة).
+        # قائمة فارغة → كل الصفحات.
+        if slugs:
+            slug_set = set(slugs)
+            pages_all = [p for p in pages_all if p["slug"] in slug_set]
+        elif slug:
             pages_all = [p for p in pages_all if p["slug"] == slug]
         if not pages_all:
             push_msg("error", "لا توجد صفحات مفعّلة")
@@ -598,12 +630,16 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
                 src = source_map[fallback_name]
                 chosen = fallback_name
 
-            push_msg("info", f"  ⏳ {chosen} ← {page.get('url', '')[:60]}…")
+            # max_posts: لو الصفحة لها رقم محدد نستخدمه، وإلا (فارغ/0/None)
+            # نأخذ كاب عالي ونعتمد على التاريخ للتحديد
+            page_max = _resolve_max_posts(page.get("max_posts"), page_df, page_dt)
+            mode_hint = "بالتاريخ" if not page.get("max_posts") else f"حد {page_max}"
+            push_msg("info", f"  ⏳ {chosen} ← {page.get('url', '')[:60]} ({mode_hint})…")
             try:
                 posts_result = loop.run_until_complete(
                     src.scrape_page(
                         page["url"], page["slug"], page["name"],
-                        page.get("max_posts", 20),
+                        page_max,
                         date_from=page_df, date_to=page_dt,
                     )
                 )
@@ -995,12 +1031,14 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
                 src = source_map[fallback_name]
                 chosen = fallback_name
 
-            push_msg("info", f"  ⏳ {chosen} ← {page.get('url', '')[:60]}…")
+            page_max = _resolve_max_posts(page.get("max_posts"), date_from, date_to)
+            mode_hint = "بالتاريخ" if not page.get("max_posts") else f"حد {page_max}"
+            push_msg("info", f"  ⏳ {chosen} ← {page.get('url', '')[:60]} ({mode_hint})…")
             try:
                 posts_result = loop.run_until_complete(
                     src.scrape_page(
                         page["url"], page["slug"], page["name"],
-                        page.get("max_posts", 20),
+                        page_max,
                         date_from=date_from, date_to=date_to,
                     )
                 )

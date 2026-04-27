@@ -1204,12 +1204,9 @@ function openTriggerModal() {
 }
 
 function openBackendTriggerModal() {
-  const pagesOpts = STATE.pagesConfig.map(p =>
-    `<option value="${escapeHtml(p.slug)}">${escapeHtml(p.name)}</option>`
-  ).join('');
-
   const sourcesStatus = STATE.sourcesStatus || [];
   const enabledSources = sourcesStatus.filter(s => s.enabled);
+  const totalPages = STATE.pagesConfig.length;
 
   openModal('🚀 سحب جديد', `
     <div class="trigger-form">
@@ -1223,25 +1220,51 @@ function openBackendTriggerModal() {
         </div>
       `}
 
+      <!-- Pages: all OR specific multi-select -->
       <div class="form-row">
         <label class="filter-label">الصفحات</label>
-        <select id="runSlugSelect" class="select">
-          <option value="">كل الصفحات (${STATE.pagesConfig.length})</option>
-          ${pagesOpts}
-        </select>
+        <div class="trigger-pages-mode">
+          <label class="radio-chip">
+            <input type="radio" name="pagesMode" value="all" checked>
+            <span>📚 كل الصفحات (${totalPages})</span>
+          </label>
+          <label class="radio-chip">
+            <input type="radio" name="pagesMode" value="some">
+            <span>✓ صفحات محددة</span>
+          </label>
+        </div>
+        <div id="trigPagesPicker" class="trigger-pages-picker" hidden>
+          <div class="trigger-pages-toolbar">
+            <input type="text" id="trigPagesSearch" class="input" placeholder="🔍 ابحث في الصفحات…">
+            <button class="btn-refresh btn-sm" id="trigSelectAllPages" type="button">تحديد الكل المرئي</button>
+            <button class="btn-refresh btn-sm" id="trigClearAllPages" type="button">مسح</button>
+          </div>
+          <div class="trigger-pages-list" id="trigPagesList">
+            ${STATE.pagesConfig.map(p => `
+              <label class="trig-page-item" data-search="${escapeHtml(((p.name || '') + ' ' + (p.url || '') + ' ' + (p.city || '')).toLowerCase())}">
+                <input type="checkbox" class="trig-page-cb" value="${escapeHtml(p.slug)}">
+                <span class="trig-page-name">${escapeHtml(p.name || p.slug)}</span>
+                ${p.city ? `<span class="trig-page-city">📍 ${escapeHtml(p.city)}</span>` : ''}
+              </label>
+            `).join('')}
+          </div>
+          <div class="trigger-pages-count" id="trigPagesCount">0 صفحة محددة</div>
+        </div>
       </div>
 
+      <!-- Quick time presets -->
       <div class="form-row">
-        <label class="filter-label">المصدر</label>
-        <select id="runSourceSelect" class="select">
-          <option value="">تلقائي (حسب الأولوية)</option>
-          ${enabledSources.map(s =>
-            `<option value="${s.source_name || s.name}">${s.icon || '🔌'} ${s.label || s.source_name || s.name}</option>`
-          ).join('')}
-        </select>
+        <label class="filter-label">الفترة الزمنية</label>
+        <div class="time-presets">
+          <button class="preset-btn" data-preset="1h" type="button">⚡ آخر ساعة</button>
+          <button class="preset-btn" data-preset="24h" type="button">📅 آخر 24 ساعة</button>
+          <button class="preset-btn" data-preset="7d" type="button">📆 آخر أسبوع</button>
+          <button class="preset-btn" data-preset="30d" type="button">🗓️ آخر شهر</button>
+          <button class="preset-btn active" data-preset="custom" type="button">✏️ مخصص</button>
+        </div>
       </div>
 
-      <div class="form-inline">
+      <div class="form-inline" id="trigCustomDates">
         <div class="form-row">
           <label class="filter-label">من تاريخ (اختياري)</label>
           <input type="date" id="runDateFrom" class="input">
@@ -1252,15 +1275,28 @@ function openBackendTriggerModal() {
         </div>
       </div>
 
+      <div class="form-row">
+        <label class="filter-label">المصدر</label>
+        <select id="runSourceSelect" class="select">
+          <option value="">تلقائي (حسب رابط كل صفحة)</option>
+          ${enabledSources.map(s =>
+            `<option value="${s.source_name || s.name}">${s.icon || '🔌'} ${s.label || s.source_name || s.name}</option>`
+          ).join('')}
+        </select>
+      </div>
+
       <button class="btn-trigger btn-full btn-lg" id="startScrapeBtn" ${enabledSources.length === 0 ? 'disabled' : ''}>
         ▶️ ابدأ السحب
       </button>
 
       <p class="note">
         ⏱️ السحب يستغرق 1-5 دقائق. التقدم سيظهر مباشرة بدون تحديث الصفحة.
+        <br>💡 لو الصفحة عندها <strong>عدد منشورات</strong> محدد سيُستخدم. لو فارغ سيعتمد على التاريخ.
       </p>
     </div>
   `);
+
+  bindTriggerModalEvents();
 
   const srcLink = document.getElementById('openSrcSettings');
   if (srcLink) {
@@ -1277,12 +1313,25 @@ function openBackendTriggerModal() {
     btn.textContent = '⏳ بدء…';
 
     const body = {};
-    const slug = document.getElementById('runSlugSelect').value;
+
+    // الصفحات: all أو محددة
+    const mode = document.querySelector('input[name="pagesMode"]:checked')?.value || 'all';
+    if (mode === 'some') {
+      const checked = Array.from(document.querySelectorAll('.trig-page-cb:checked')).map(cb => cb.value);
+      if (checked.length === 0) {
+        showToast('اختر صفحة واحدة على الأقل أو اختر "كل الصفحات"', 'error');
+        btn.disabled = false;
+        btn.textContent = '▶️ ابدأ السحب';
+        return;
+      }
+      body.slugs = checked;
+    }
+
     const source = document.getElementById('runSourceSelect').value;
+    if (source) body.source = source;
+
     const dateFrom = document.getElementById('runDateFrom').value;
     const dateTo = document.getElementById('runDateTo').value;
-    if (slug) body.slug = slug;
-    if (source) body.source = source;
     if (dateFrom) body.date_from = dateFrom;
     if (dateTo) body.date_to = dateTo;
 
@@ -1306,6 +1355,86 @@ function openBackendTriggerModal() {
       btn.disabled = false;
       btn.textContent = '▶️ ابدأ السحب';
     }
+  });
+}
+
+// ========= Trigger modal: pages multi-select + quick presets =========
+
+function bindTriggerModalEvents() {
+  const srcLink = document.getElementById('openSrcSettings');
+  if (srcLink) {
+    srcLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      closeModal();
+      setTimeout(() => openSettingsModal(), 250);
+    });
+  }
+
+  // Toggle pages picker visibility
+  document.querySelectorAll('input[name="pagesMode"]').forEach(r => {
+    r.addEventListener('change', () => {
+      const picker = document.getElementById('trigPagesPicker');
+      if (picker) picker.hidden = r.value !== 'some' || !r.checked;
+    });
+  });
+
+  // Search inside picker
+  const searchEl = document.getElementById('trigPagesSearch');
+  if (searchEl) {
+    searchEl.addEventListener('input', () => {
+      const q = searchEl.value.trim().toLowerCase();
+      document.querySelectorAll('.trig-page-item').forEach(item => {
+        const blob = item.dataset.search || '';
+        item.hidden = q && !blob.includes(q);
+      });
+    });
+  }
+
+  // Update count + manage select-all behavior
+  const countEl = document.getElementById('trigPagesCount');
+  function updateTrigCount() {
+    const n = document.querySelectorAll('.trig-page-cb:checked').length;
+    if (countEl) countEl.textContent = `${n} صفحة محددة`;
+  }
+  document.querySelectorAll('.trig-page-cb').forEach(cb => cb.addEventListener('change', updateTrigCount));
+
+  document.getElementById('trigSelectAllPages')?.addEventListener('click', () => {
+    document.querySelectorAll('.trig-page-item:not([hidden]) .trig-page-cb').forEach(cb => cb.checked = true);
+    updateTrigCount();
+  });
+  document.getElementById('trigClearAllPages')?.addEventListener('click', () => {
+    document.querySelectorAll('.trig-page-cb').forEach(cb => cb.checked = false);
+    updateTrigCount();
+  });
+
+  // Quick time presets
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const dfEl = document.getElementById('runDateFrom');
+      const dtEl = document.getElementById('runDateTo');
+      const customWrap = document.getElementById('trigCustomDates');
+      const preset = btn.dataset.preset;
+      const now = new Date();
+      const fmt = (d) => d.toISOString().slice(0, 10);
+
+      if (preset === 'custom') {
+        customWrap.hidden = false;
+        return;
+      }
+      customWrap.hidden = true;
+
+      let from = new Date(now);
+      if (preset === '1h')  from.setHours(now.getHours() - 1);
+      if (preset === '24h') from.setDate(now.getDate() - 1);
+      if (preset === '7d')  from.setDate(now.getDate() - 7);
+      if (preset === '30d') from.setDate(now.getDate() - 30);
+      // الـ inputs نوع date فبتقبل yyyy-mm-dd فقط (الساعة تنحسب server-side
+      // لأن السحب فيه dedup-by-id أي ما رح يحضر مرتين)
+      dfEl.value = fmt(from);
+      dtEl.value = '';   // إلى الآن
+    });
   });
 }
 
@@ -1365,14 +1494,22 @@ function openProgressModal(jobId) {
         evtSource.close();
         const footer = document.getElementById('progFooter');
         if (footer) footer.hidden = false;
-        const doneBtn = document.getElementById('progDoneBtn');
-        if (doneBtn) {
-          doneBtn.addEventListener('click', async () => {
-            closeModal();
+
+        // refresh data in background so when user closes the modal the
+        // new posts are already there
+        (async () => {
+          try {
             await loadIndex();
             await loadAllPages();
             await loadHistory();
             applyFilters();
+          } catch {}
+        })();
+
+        const doneBtn = document.getElementById('progDoneBtn');
+        if (doneBtn) {
+          doneBtn.addEventListener('click', () => {
+            closeModal();
             showToast(data.status === 'success' ? '✅ تم تحديث البيانات' : '⚠️ انتهى مع أخطاء',
                       data.status === 'success' ? 'success' : 'error');
           });
@@ -1759,7 +1896,7 @@ function renderPageRow(page, index) {
             <span class="page-meta-source" title="المصدر">${srcIcon} ${srcLabel}</span>
             ${page.city ? `<span class="page-meta-city">📍 ${escapeHtml(page.city)}</span>` : ''}
             ${page.followers ? `<span class="page-meta-followers">👥 ${formatNum(page.followers)}</span>` : ''}
-            <span class="page-meta-max">🎯 ${page.max_posts || 30}</span>
+            <span class="page-meta-max" title="عدد المنشورات (0 = بالتاريخ)">🎯 ${page.max_posts ? page.max_posts : 'بالتاريخ'}</span>
           </div>
         </div>
         ${STATE.hasBackend ? `<button class="btn-icon-sm btn-test page-test-btn" title="اختبر السحب" type="button" onclick="event.stopPropagation()">🧪</button>` : ''}
@@ -1789,8 +1926,9 @@ function renderPageRow(page, index) {
             <input type="number" class="input page-followers" min="0" placeholder="0" value="${page.followers || 0}" dir="ltr">
           </div>
           <div class="form-row">
-            <label class="filter-label">عدد المنشورات (NumberOfPost)</label>
-            <input type="number" class="input page-max-posts" min="1" max="500" value="${page.max_posts || 30}">
+            <label class="filter-label">عدد المنشورات (اتركه فارغاً للسحب بالتاريخ)</label>
+            <input type="number" class="input page-max-posts" min="0" max="1000" placeholder="مثلاً 30 — أو فارغ"
+                   value="${page.max_posts ? page.max_posts : ''}">
           </div>
         </div>
         <div class="page-row-inline">
@@ -2189,7 +2327,9 @@ function syncPagesFromUI() {
     let slug = row.querySelector('.page-slug').value.trim();
     if (!slug) slug = slugify(page.name, page.url);
     page.slug = slug;
-    page.max_posts = parseInt(row.querySelector('.page-max-posts').value) || 30;
+    // 0 / فارغ = اعتمد على التاريخ. غير ذلك → عدد المنشورات.
+    const maxRaw = row.querySelector('.page-max-posts').value.trim();
+    page.max_posts = maxRaw === '' ? 0 : (parseInt(maxRaw) || 0);
     page.source = row.querySelector('.page-source').value;
     page.enabled = row.querySelector('.page-enabled').checked;
     page.city = (row.querySelector('.page-city')?.value || '').trim();
