@@ -2708,12 +2708,42 @@ button:active {
 
 .analytics-header {
   margin-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.analytics-header-text {
+  flex: 1;
+  min-width: 200px;
+}
+
+.analytics-header-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .analytics-header h2 {
   font-family: var(--font-display);
   font-size: 1.4rem;
   margin: 0 0 0.25rem;
+}
+
+.analytics-stamp {
+  display: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+  padding: 4px 12px;
+  border-inline-start: 3px solid var(--accent-500);
+  background: var(--ink-50);
+}
+
+[data-print-only] {
+  display: none;
 }
 
 .analytics-header .filter-chip {
@@ -2799,6 +2829,147 @@ button:active {
 @keyframes live-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5); }
   50%      { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); }
+}
+
+/* ================================================================
+   Multi-select dropdown filter component
+   ================================================================ */
+.multiselect {
+  position: relative;
+}
+
+.multiselect-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  text-align: start;
+  transition: all 0.15s var(--ease);
+  box-shadow: var(--shadow-xs);
+}
+
+.multiselect-trigger:hover { border-color: var(--border-strong); }
+
+.multiselect.open .multiselect-trigger,
+.multiselect.has-selection .multiselect-trigger {
+  border-color: var(--accent-500);
+  background: var(--accent-50);
+  color: var(--accent-700);
+}
+
+.multiselect.open .multiselect-trigger svg {
+  transform: rotate(180deg);
+}
+
+.multiselect-trigger svg {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.multiselect-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.multiselect-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  min-width: 240px;
+  max-width: 360px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: ms-fade 0.15s ease;
+}
+
+@keyframes ms-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.multiselect-search {
+  font-size: 0.85rem !important;
+  padding: 6px 10px !important;
+}
+
+.multiselect-toolbar {
+  display: flex;
+  gap: 4px;
+}
+
+.multiselect-toolbar .btn-refresh {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+}
+
+.multiselect-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+}
+
+.ms-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+.ms-item:hover { background: var(--ink-50); }
+
+.ms-item input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent-600);
+}
+
+.ms-item:has(input:checked) {
+  background: var(--accent-50);
+  color: var(--accent-900);
+  font-weight: 600;
+}
+
+.ms-item span {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ms-item-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  background: var(--ink-100);
+  border-radius: var(--radius-full);
 }
 
 /* ================================================================
@@ -6497,3 +6668,59 @@ button:active {
     padding: 1.25rem 1rem;
   }
 }
+
+/* ================================================================
+   Print stylesheet (analytics PDF / print)
+   ================================================================ */
+@media print {
+  /* Hide everything except the analytics view when printing */
+  body.printing-analytics > *:not(#appRoot),
+  body.printing-analytics #appRoot > *:not(.analytics-view):not(:has(.analytics-view)) {
+    display: none !important;
+  }
+
+  /* When in analytics-pdf-export mode, hide non-print elements inside the wrapper */
+  body.exporting-pdf [data-no-print] { display: none !important; }
+  body.exporting-pdf .analytics-stamp { display: block !important; }
+  body.printing-analytics [data-no-print] { display: none !important; }
+  body.printing-analytics .analytics-stamp { display: block !important; }
+
+  /* Print colors */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Avoid awkward page breaks inside cards/sections */
+  .analytics-card,
+  .analytics-section,
+  .top-post-row {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .view-tabs,
+  .header-inner,
+  .controls,
+  .stats-bar,
+  .results-meta,
+  .live-status-banner,
+  .footer-simple,
+  .modal-overlay,
+  .bg-decoration {
+    display: none !important;
+  }
+
+  .analytics-view {
+    padding: 0 !important;
+    max-width: 100% !important;
+  }
+
+  body { background: white !important; }
+}
+
+/* ================================================================
+   PDF capture mode (when html2pdf is rendering)
+   ================================================================ */
+body.exporting-pdf .analytics-header-actions { display: none !important; }
+body.exporting-pdf .analytics-stamp { display: block !important; }

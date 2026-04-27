@@ -132,26 +132,61 @@
 <section class="controls">
   <div class="filter-group">
     <label class="filter-label">الصفحة</label>
-    <select id="pageFilter" class="select"><option value="all">كل الصفحات</option></select>
+    <div class="multiselect" data-filter="page">
+      <button class="multiselect-trigger" type="button">
+        <span class="multiselect-label">كل الصفحات</span>
+        <svg width="10" height="10" viewBox="0 0 12 12"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+      </button>
+      <div class="multiselect-dropdown" hidden>
+        <input type="text" class="multiselect-search input" placeholder="🔍 ابحث…">
+        <div class="multiselect-toolbar">
+          <button class="btn-refresh btn-sm ms-select-all" type="button">تحديد الكل</button>
+          <button class="btn-refresh btn-sm ms-clear" type="button">مسح</button>
+        </div>
+        <div class="multiselect-list" id="pageFilterList"></div>
+      </div>
+    </div>
   </div>
   <div class="filter-group">
     <label class="filter-label">المصدر</label>
-    <select id="sourceFilter" class="select">
-      <option value="all">كل المصادر</option>
-      <option value="apify">💎 Apify (فيسبوك)</option>
-      <option value="rss">📡 RSS</option>
-    </select>
+    <div class="multiselect" data-filter="source">
+      <button class="multiselect-trigger" type="button">
+        <span class="multiselect-label">كل المصادر</span>
+        <svg width="10" height="10" viewBox="0 0 12 12"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+      </button>
+      <div class="multiselect-dropdown" hidden>
+        <div class="multiselect-toolbar">
+          <button class="btn-refresh btn-sm ms-select-all" type="button">تحديد الكل</button>
+          <button class="btn-refresh btn-sm ms-clear" type="button">مسح</button>
+        </div>
+        <div class="multiselect-list">
+          <label class="ms-item"><input type="checkbox" value="apify"><span>💎 Apify (فيسبوك)</span></label>
+          <label class="ms-item"><input type="checkbox" value="rss"><span>📡 RSS</span></label>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="filter-group">
     <label class="filter-label">نوع المنشور</label>
-    <select id="postTypeFilter" class="select">
-      <option value="all">كل الأنواع</option>
-      <option value="text">📝 نص</option>
-      <option value="photo">🖼 صور</option>
-      <option value="video">🎥 فيديو</option>
-      <option value="link">🔗 رابط</option>
-      <option value="live">🔴 مباشر</option>
-    </select>
+    <div class="multiselect" data-filter="postType">
+      <button class="multiselect-trigger" type="button">
+        <span class="multiselect-label">كل الأنواع</span>
+        <svg width="10" height="10" viewBox="0 0 12 12"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+      </button>
+      <div class="multiselect-dropdown" hidden>
+        <div class="multiselect-toolbar">
+          <button class="btn-refresh btn-sm ms-select-all" type="button">تحديد الكل</button>
+          <button class="btn-refresh btn-sm ms-clear" type="button">مسح</button>
+        </div>
+        <div class="multiselect-list">
+          <label class="ms-item"><input type="checkbox" value="text"><span>📝 نص</span></label>
+          <label class="ms-item"><input type="checkbox" value="photo"><span>🖼 صور</span></label>
+          <label class="ms-item"><input type="checkbox" value="video"><span>🎥 فيديو</span></label>
+          <label class="ms-item"><input type="checkbox" value="link"><span>🔗 رابط</span></label>
+          <label class="ms-item"><input type="checkbox" value="live"><span>🔴 مباشر</span></label>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="filter-group">
     <label class="filter-label">الترتيب</label>
@@ -192,13 +227,24 @@
   </div>
   <div class="filter-group">
     <label class="filter-label">فلاتر سريعة</label>
-    <div class="filter-checkboxes">
-      <label class="checkbox-chip"><input type="checkbox" id="hasImageOnly"><span>🖼 بصور</span></label>
-      <label class="checkbox-chip"><input type="checkbox" id="hasVideoOnly"><span>🎥 بفيديو</span></label>
-      <label class="checkbox-chip"><input type="checkbox" id="textOnly"><span>📝 نص فقط</span></label>
-      <label class="checkbox-chip"><input type="checkbox" id="highEngagementOnly"><span>🔥 عالي</span></label>
-      <label class="checkbox-chip"><input type="checkbox" id="lowEngagementOnly"><span>❄️ منخفض</span></label>
-      <label class="checkbox-chip"><input type="checkbox" id="hasCommentsOnly"><span>💬 له تعليقات</span></label>
+    <div class="multiselect" data-filter="quick">
+      <button class="multiselect-trigger" type="button">
+        <span class="multiselect-label">بدون فلاتر</span>
+        <svg width="10" height="10" viewBox="0 0 12 12"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+      </button>
+      <div class="multiselect-dropdown" hidden>
+        <div class="multiselect-toolbar">
+          <button class="btn-refresh btn-sm ms-clear" type="button">مسح الكل</button>
+        </div>
+        <div class="multiselect-list">
+          <label class="ms-item"><input type="checkbox" id="hasImageOnly"><span>🖼 بصور</span></label>
+          <label class="ms-item"><input type="checkbox" id="hasVideoOnly"><span>🎥 بفيديو</span></label>
+          <label class="ms-item"><input type="checkbox" id="textOnly"><span>📝 نص فقط</span></label>
+          <label class="ms-item"><input type="checkbox" id="highEngagementOnly"><span>🔥 تفاعل عالي (1000+)</span></label>
+          <label class="ms-item"><input type="checkbox" id="lowEngagementOnly"><span>❄️ تفاعل منخفض (&lt;50)</span></label>
+          <label class="ms-item"><input type="checkbox" id="hasCommentsOnly"><span>💬 له تعليقات</span></label>
+        </div>
+      </div>
     </div>
   </div>
   <div class="filter-group">

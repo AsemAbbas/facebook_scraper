@@ -12,6 +12,12 @@ const STATE = {
   liveRuns: [],     // jobs نشطة
   sourcesStatus: [],
   hasBackend: true, // v4.0: always backend
+  // Multi-select filter selections (Set of values - empty = all)
+  multiSelect: {
+    page:     new Set(),
+    source:   new Set(),
+    postType: new Set(),
+  },
 };
 
 const LS = {
@@ -27,9 +33,7 @@ const els = {
   statPosts: document.getElementById('statPosts'),
   statReactions: document.getElementById('statReactions'),
   statComments: document.getElementById('statComments'),
-  // filters
-  pageFilter: document.getElementById('pageFilter'),
-  sourceFilter: document.getElementById('sourceFilter'),
+  // filters (single-value)
   sortFilter: document.getElementById('sortFilter'),
   searchInput: document.getElementById('searchInput'),
   dateFrom: document.getElementById('dateFrom'),
@@ -37,7 +41,7 @@ const els = {
   minReactions: document.getElementById('minReactions'),
   maxReactions: document.getElementById('maxReactions'),
   minComments: document.getElementById('minComments'),
-  postTypeFilter: document.getElementById('postTypeFilter'),
+  // quick filters (الموجودون داخل multiselect "quick")
   hasImageOnly: document.getElementById('hasImageOnly'),
   hasVideoOnly: document.getElementById('hasVideoOnly'),
   textOnly: document.getElementById('textOnly'),
@@ -503,13 +507,12 @@ async function loadHistory() {
 }
 
 function renderPageFilter() {
-  const opts = ['<option value="all">كل الصفحات</option>'];
-  (STATE.index?.pages || []).forEach(p => {
-    if (p.status === 'success') {
-      opts.push(`<option value="${p.slug}">${escapeHtml(p.name)}</option>`);
-    }
-  });
-  els.pageFilter.innerHTML = opts.join('');
+  // page filter is now a multiselect — populated from STATE.pagesConfig
+  // (which has more info than STATE.index.pages: city, max_posts, etc).
+  // This is called whenever pages list changes (after a scrape, etc).
+  populatePageFilterMultiselect();
+  // re-apply STATE selection to the freshly-populated checkboxes
+  syncMultiselectCheckboxesFromState();
 }
 
 // ========= Live Runs Polling =========
@@ -581,13 +584,15 @@ function applyFilters() {
   let posts = [...STATE.allPosts];
   let activeFilters = 0;
 
-  if (els.pageFilter.value !== 'all') {
-    posts = posts.filter(p => p.page_slug === els.pageFilter.value);
+  // Multi-select: pages
+  if (STATE.multiSelect.page.size > 0) {
+    posts = posts.filter(p => STATE.multiSelect.page.has(p.page_slug));
     activeFilters++;
   }
 
-  if (els.sourceFilter.value !== 'all') {
-    posts = posts.filter(p => p.source === els.sourceFilter.value);
+  // Multi-select: sources
+  if (STATE.multiSelect.source.size > 0) {
+    posts = posts.filter(p => STATE.multiSelect.source.has(p.source));
     activeFilters++;
   }
 
@@ -633,10 +638,9 @@ function applyFilters() {
     activeFilters++;
   }
 
-  // فلتر نوع المنشور (dropdown)
-  const ptype = els.postTypeFilter?.value || 'all';
-  if (ptype !== 'all') {
-    posts = posts.filter(p => (p.post_type || 'text') === ptype);
+  // Multi-select: post types
+  if (STATE.multiSelect.postType.size > 0) {
+    posts = posts.filter(p => STATE.multiSelect.postType.has(p.post_type || 'text'));
     activeFilters++;
   }
 
@@ -703,16 +707,22 @@ function applyFilters() {
 function saveFilters() {
   try {
     localStorage.setItem(LS.filters, JSON.stringify({
-      page: els.pageFilter.value,
+      pages: Array.from(STATE.multiSelect.page),
+      sources: Array.from(STATE.multiSelect.source),
+      postTypes: Array.from(STATE.multiSelect.postType),
       sort: els.sortFilter.value,
-      source: els.sourceFilter.value,
       search: els.searchInput.value,
       dateFrom: els.dateFrom.value,
       dateTo: els.dateTo.value,
       minReactions: els.minReactions.value,
+      maxReactions: els.maxReactions?.value || '',
       minComments: els.minComments.value,
-      hasImageOnly: els.hasImageOnly.checked,
-      highEngagementOnly: els.highEngagementOnly.checked,
+      hasImageOnly: !!els.hasImageOnly?.checked,
+      hasVideoOnly: !!els.hasVideoOnly?.checked,
+      textOnly: !!els.textOnly?.checked,
+      highEngagementOnly: !!els.highEngagementOnly?.checked,
+      lowEngagementOnly: !!els.lowEngagementOnly?.checked,
+      hasCommentsOnly: !!els.hasCommentsOnly?.checked,
     }));
   } catch {}
 }
@@ -722,34 +732,61 @@ function restoreFilters() {
     const saved = localStorage.getItem(LS.filters);
     if (!saved) return;
     const f = JSON.parse(saved);
-    if (f.page) els.pageFilter.value = f.page;
+
+    // Multi-select restoration: STATE + checkbox restoration done after DOM ready
+    if (Array.isArray(f.pages))     STATE.multiSelect.page     = new Set(f.pages);
+    if (Array.isArray(f.sources))   STATE.multiSelect.source   = new Set(f.sources);
+    if (Array.isArray(f.postTypes)) STATE.multiSelect.postType = new Set(f.postTypes);
+
     if (f.sort) els.sortFilter.value = f.sort;
-    if (f.source) els.sourceFilter.value = f.source;
     if (f.search) els.searchInput.value = f.search;
     if (f.dateFrom) els.dateFrom.value = f.dateFrom;
     if (f.dateTo) els.dateTo.value = f.dateTo;
     if (f.minReactions) els.minReactions.value = f.minReactions;
+    if (f.maxReactions && els.maxReactions) els.maxReactions.value = f.maxReactions;
     if (f.minComments) els.minComments.value = f.minComments;
-    if (f.hasImageOnly) els.hasImageOnly.checked = true;
-    if (f.highEngagementOnly) els.highEngagementOnly.checked = true;
+    if (f.hasImageOnly && els.hasImageOnly) els.hasImageOnly.checked = true;
+    if (f.hasVideoOnly && els.hasVideoOnly) els.hasVideoOnly.checked = true;
+    if (f.textOnly && els.textOnly) els.textOnly.checked = true;
+    if (f.highEngagementOnly && els.highEngagementOnly) els.highEngagementOnly.checked = true;
+    if (f.lowEngagementOnly && els.lowEngagementOnly) els.lowEngagementOnly.checked = true;
+    if (f.hasCommentsOnly && els.hasCommentsOnly) els.hasCommentsOnly.checked = true;
   } catch {}
 }
 
+/**
+ * يعكس قيم STATE.multiSelect على الـ checkboxes في الـ DOM.
+ * يُستدعى بعد setupMultiselects() أو populatePageFilterMultiselect().
+ */
+function syncMultiselectCheckboxesFromState() {
+  document.querySelectorAll('.multiselect').forEach(ms => {
+    const filterId = ms.dataset.filter;
+    if (!filterId || filterId === 'quick') return;   // quick filters use els.* directly
+    const set = STATE.multiSelect[filterId];
+    if (!set) return;
+    ms.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.checked = set.has(cb.value);
+    });
+    updateMultiselectLabel(ms);
+  });
+  // أيضاً sync labels لـ quick filters
+  document.querySelectorAll('.multiselect[data-filter="quick"]').forEach(ms => updateMultiselectLabel(ms));
+}
+
 function resetAllFilters() {
-  els.pageFilter.value = 'all';
+  // Clear multi-selects
+  STATE.multiSelect.page.clear();
+  STATE.multiSelect.source.clear();
+  STATE.multiSelect.postType.clear();
+  document.querySelectorAll('.multiselect input[type="checkbox"]').forEach(cb => cb.checked = false);
+  document.querySelectorAll('.multiselect').forEach(ms => updateMultiselectLabel(ms));
+
   els.sortFilter.value = 'newest';
-  els.sourceFilter.value = 'all';
   els.searchInput.value = '';
   els.minReactions.value = '';
   if (els.maxReactions) els.maxReactions.value = '';
   els.minComments.value = '';
-  if (els.postTypeFilter) els.postTypeFilter.value = 'all';
-  els.hasImageOnly.checked = false;
-  if (els.hasVideoOnly) els.hasVideoOnly.checked = false;
-  if (els.textOnly) els.textOnly.checked = false;
-  els.highEngagementOnly.checked = false;
-  if (els.lowEngagementOnly) els.lowEngagementOnly.checked = false;
-  if (els.hasCommentsOnly) els.hasCommentsOnly.checked = false;
+  // checkboxes inside quick-filters multiselect get reset by the loop above
   // إعادة تعيين التاريخ لآخر 24 ساعة
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -779,6 +816,144 @@ function applyQuickRange(range) {
     b.classList.toggle('active', b.dataset.range === range));
 }
 
+// ==================== Multiselect dropdown component ====================
+
+/**
+ * يبني عناصر القائمة لفلتر الصفحة من STATE.pagesConfig (يُستدعى بعد التحميل).
+ */
+function populatePageFilterMultiselect() {
+  const list = document.getElementById('pageFilterList');
+  if (!list) return;
+  list.innerHTML = STATE.pagesConfig.map(p => `
+    <label class="ms-item" data-search="${escapeHtml(((p.name || '') + ' ' + (p.url || '') + ' ' + (p.city || '')).toLowerCase())}">
+      <input type="checkbox" value="${escapeHtml(p.slug)}">
+      <span>${escapeHtml(p.name || p.slug)}</span>
+      ${p.city ? `<small class="ms-item-meta">${escapeHtml(p.city)}</small>` : ''}
+    </label>
+  `).join('');
+  // أعد ربط بعد إعادة الـ render
+  bindMultiselectInputs(document.querySelector('.multiselect[data-filter="page"]'));
+}
+
+function setupMultiselects() {
+  document.querySelectorAll('.multiselect').forEach(ms => {
+    const trigger = ms.querySelector('.multiselect-trigger');
+    const dropdown = ms.querySelector('.multiselect-dropdown');
+    const search = ms.querySelector('.multiselect-search');
+    const selectAllBtn = ms.querySelector('.ms-select-all');
+    const clearBtn = ms.querySelector('.ms-clear');
+    const filterId = ms.dataset.filter;
+
+    // toggle dropdown
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // close others
+      document.querySelectorAll('.multiselect-dropdown').forEach(d => {
+        if (d !== dropdown) d.hidden = true;
+      });
+      document.querySelectorAll('.multiselect.open').forEach(o => {
+        if (o !== ms) o.classList.remove('open');
+      });
+      const opening = dropdown.hidden;
+      dropdown.hidden = !dropdown.hidden;
+      ms.classList.toggle('open', opening);
+      if (opening && search) setTimeout(() => search.focus(), 50);
+    });
+
+    // search
+    if (search) {
+      search.addEventListener('input', () => {
+        const q = search.value.trim().toLowerCase();
+        ms.querySelectorAll('.ms-item').forEach(item => {
+          const blob = item.dataset.search || item.textContent.toLowerCase();
+          item.hidden = q && !blob.includes(q);
+        });
+      });
+    }
+
+    // select all
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', () => {
+        ms.querySelectorAll('.ms-item:not([hidden]) input[type="checkbox"]').forEach(cb => {
+          cb.checked = true;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+    }
+
+    // clear
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        ms.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          cb.checked = false;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+    }
+
+    bindMultiselectInputs(ms);
+  });
+
+  // close on outside click
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.multiselect')) {
+      document.querySelectorAll('.multiselect-dropdown').forEach(d => d.hidden = true);
+      document.querySelectorAll('.multiselect.open').forEach(o => o.classList.remove('open'));
+    }
+  });
+}
+
+function bindMultiselectInputs(ms) {
+  if (!ms) return;
+  const filterId = ms.dataset.filter;
+  ms.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      updateMultiselectLabel(ms);
+      // update STATE.multiSelect for the structured filters; quick filters
+      // are still read directly from els (their checkboxes are in there).
+      if (filterId && filterId !== 'quick' && STATE.multiSelect[filterId]) {
+        const set = STATE.multiSelect[filterId];
+        if (cb.checked) set.add(cb.value);
+        else set.delete(cb.value);
+      }
+      applyFilters();
+    });
+  });
+  updateMultiselectLabel(ms);
+}
+
+function updateMultiselectLabel(ms) {
+  const labelEl = ms.querySelector('.multiselect-label');
+  if (!labelEl) return;
+  const checked = Array.from(ms.querySelectorAll('input[type="checkbox"]:checked'));
+  const allCount = ms.querySelectorAll('input[type="checkbox"]').length;
+  const filterId = ms.dataset.filter;
+
+  ms.classList.toggle('has-selection', checked.length > 0);
+
+  const allLabels = {
+    page: 'كل الصفحات',
+    source: 'كل المصادر',
+    postType: 'كل الأنواع',
+    quick: 'بدون فلاتر',
+  };
+
+  if (checked.length === 0) {
+    labelEl.textContent = allLabels[filterId] || 'الكل';
+    return;
+  }
+  if (checked.length === allCount && filterId !== 'quick') {
+    labelEl.textContent = allLabels[filterId] || 'الكل';
+    return;
+  }
+  if (checked.length === 1) {
+    const lbl = checked[0].nextElementSibling?.textContent?.trim() || checked[0].value;
+    labelEl.textContent = lbl;
+  } else {
+    labelEl.textContent = `${checked.length} محدّد`;
+  }
+}
+
 // ========= Render =========
 
 function renderPosts() {
@@ -799,12 +974,12 @@ function renderPosts() {
     layout === 'list' ? renderPostListRow(post, i) : renderPostCard(post, i)
   ).join('');
 
-  // Click handlers
-  document.querySelectorAll('.post-card.clickable').forEach(card => {
-    card.addEventListener('click', (e) => {
+  // Click handlers — يدعم card view و list view
+  document.querySelectorAll('.post-card.clickable, .post-list-row.clickable').forEach(item => {
+    item.addEventListener('click', (e) => {
       if (e.target.closest('a, input, button')) return;
-      const postId = card.dataset.postId;
-      const slug = card.dataset.postSlug;
+      const postId = item.dataset.postId;
+      const slug = item.dataset.postSlug;
       const post = STATE.allPosts.find(p => p.post_id === postId && p.page_slug === slug);
       if (post) openPostDetailModal(post);
     });
@@ -816,21 +991,22 @@ function renderPosts() {
     cb.addEventListener('click', e => e.stopPropagation());
   });
 
-  // Delete button
+  // Delete button — يعمل لكلا layouts
   document.querySelectorAll('.btn-delete-post').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const card = btn.closest('.post-card');
-      const pid = card.dataset.postInternal;
+      const item = btn.closest('.post-card, .post-list-row');
+      if (!item) return;
+      const pid = item.dataset.postInternal;
       if (!pid) return;
       if (!confirm('حذف هذا المنشور؟')) return;
       const res = await fetch(`/api/posts/${pid}`, {
         method: 'DELETE', credentials: 'include',
       });
       if (res.ok) {
-        card.style.opacity = '0';
+        item.style.opacity = '0';
         setTimeout(() => {
-          card.remove();
+          item.remove();
           showToast('تم الحذف', 'success');
           loadAllPages().then(applyFilters);
         }, 200);
@@ -3471,10 +3647,19 @@ function renderAnalyticsView() {
   const topTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
 
   pane.innerHTML = `
-    <div class="analytics-wrapper">
+    <div class="analytics-wrapper" id="analyticsWrapper">
       <div class="analytics-header">
-        <h2>📊 الإحصاءات والتحليلات${isFiltered ? ' <span class="filter-chip">🔍 نتائج الفلتر</span>' : ''}</h2>
-        <p class="analytics-sub">${isFiltered ? 'الأرقام تعكس الفلاتر النشطة في الأعلى. عدّل الفلاتر وسيتم تحديث الإحصائيات.' : 'الأرقام لكل المنشورات. استخدم الفلاتر في الأعلى لتضييق النطاق.'}</p>
+        <div class="analytics-header-text">
+          <h2>📊 الإحصاءات والتحليلات${isFiltered ? ' <span class="filter-chip">🔍 نتائج الفلتر</span>' : ''}</h2>
+          <p class="analytics-sub">${isFiltered ? 'الأرقام تعكس الفلاتر النشطة في الأعلى. عدّل الفلاتر وسيتم تحديث الإحصائيات.' : 'الأرقام لكل المنشورات. استخدم الفلاتر في الأعلى لتضييق النطاق.'}</p>
+        </div>
+        <div class="analytics-header-actions" data-no-print>
+          <button class="btn-trigger btn-sm" id="exportAnalyticsPdfBtn" type="button" title="تصدير الإحصائيات كـ PDF">📄 PDF</button>
+          <button class="btn-refresh btn-sm" id="printAnalyticsBtn" type="button" title="طباعة">🖨 طباعة</button>
+        </div>
+      </div>
+      <div class="analytics-stamp" data-print-only>
+        تم التوليد: ${new Date().toLocaleString('ar-SA-u-ca-gregory', { dateStyle: 'long', timeStyle: 'short' })} · مَرصَد
       </div>
       <div class="analytics-grid">
         <div class="analytics-card">
@@ -3616,6 +3801,84 @@ function renderAnalyticsView() {
       if (post) openPostDetailModal(post);
     });
   });
+
+  // Print
+  document.getElementById('printAnalyticsBtn')?.addEventListener('click', () => {
+    document.body.classList.add('printing-analytics');
+    window.print();
+    setTimeout(() => document.body.classList.remove('printing-analytics'), 500);
+  });
+
+  // PDF export (lazy-load html2pdf)
+  document.getElementById('exportAnalyticsPdfBtn')?.addEventListener('click', exportAnalyticsAsPdf);
+}
+
+// ==================== Analytics PDF export ====================
+let _html2pdfLoadPromise = null;
+function loadHtml2PdfLib() {
+  if (window.html2pdf) return Promise.resolve();
+  if (_html2pdfLoadPromise) return _html2pdfLoadPromise;
+  _html2pdfLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      _html2pdfLoadPromise = null;
+      reject(new Error('فشل تحميل مكتبة PDF — تحقق من الاتصال بالإنترنت'));
+    };
+    document.head.appendChild(s);
+  });
+  return _html2pdfLoadPromise;
+}
+
+async function exportAnalyticsAsPdf() {
+  const btn = document.getElementById('exportAnalyticsPdfBtn');
+  if (!btn) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ جاري التحميل…';
+
+  try {
+    showToast('⏳ جاري تحميل مكتبة PDF…', 'info');
+    await loadHtml2PdfLib();
+
+    const wrapper = document.getElementById('analyticsWrapper');
+    if (!wrapper) throw new Error('Analytics view not rendered');
+
+    btn.textContent = '⏳ جاري إنشاء الـ PDF…';
+
+    // hide print-hidden elements during capture
+    document.body.classList.add('exporting-pdf');
+
+    const filename = `marsad_analytics_${new Date().toISOString().slice(0, 10)}.pdf`;
+    const opts = {
+      margin: [10, 10, 10, 10],
+      filename,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+      },
+      jsPDF: {
+        unit: 'mm',
+        format: 'a4',
+        orientation: 'portrait',
+      },
+      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+    };
+
+    await html2pdf().set(opts).from(wrapper).save();
+    showToast('✅ تم تصدير PDF', 'success');
+  } catch (e) {
+    showToast('فشل التصدير: ' + e.message, 'error');
+  } finally {
+    document.body.classList.remove('exporting-pdf');
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 // ========= View switching (Posts | Analytics) =========
@@ -4930,8 +5193,11 @@ function openEditUserModal(uid, row) {
 
 function setupListeners() {
   // Filters
-  els.pageFilter.addEventListener('change', applyFilters);
-  els.sourceFilter.addEventListener('change', applyFilters);
+  // (page/source/postType + quick filters: handled inside multiselects)
+  setupMultiselects();
+  // restore selection after multiselects are set up
+  syncMultiselectCheckboxesFromState();
+
   els.sortFilter.addEventListener('change', applyFilters);
   els.searchInput.addEventListener('input', debounce(applyFilters, 300));
   els.dateFrom.addEventListener('change', applyFilters);
@@ -4939,13 +5205,7 @@ function setupListeners() {
   els.minReactions.addEventListener('input', debounce(applyFilters, 300));
   els.maxReactions?.addEventListener('input', debounce(applyFilters, 300));
   els.minComments.addEventListener('input', debounce(applyFilters, 300));
-  els.postTypeFilter?.addEventListener('change', applyFilters);
-  els.hasImageOnly?.addEventListener('change', applyFilters);
-  els.hasVideoOnly?.addEventListener('change', applyFilters);
-  els.textOnly?.addEventListener('change', applyFilters);
-  els.highEngagementOnly?.addEventListener('change', applyFilters);
-  els.lowEngagementOnly?.addEventListener('change', applyFilters);
-  els.hasCommentsOnly?.addEventListener('change', applyFilters);
+  // quick filter checkboxes are inside the multiselect — listeners attached there
   els.resetFilters.addEventListener('click', resetAllFilters);
 
   // Quick range buttons
