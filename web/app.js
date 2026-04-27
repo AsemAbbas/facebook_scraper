@@ -1138,7 +1138,352 @@ function closeModal() {
 
 // ========= Export CSV =========
 
+// ==================== Posts Export (advanced) ====================
+const EXPORT_FIELDS = [
+  { id: 'page_name',           label: 'اسم الصفحة',     get: p => p.page_name || '' },
+  { id: 'page_slug',           label: 'كود الصفحة (slug)', get: p => p.page_slug || '', off: true },
+  { id: 'text',                label: 'النص',           get: p => p.text || '' },
+  { id: 'post_type',           label: 'نوع المنشور',     get: p => p.post_type || 'text' },
+  { id: 'reactions',           label: 'تفاعلات',        get: p => p.reactions || 0 },
+  { id: 'comments',            label: 'تعليقات',        get: p => p.comments || 0 },
+  { id: 'shares',              label: 'مشاركات',        get: p => p.shares || 0 },
+  { id: 'engagement_total',    label: 'إجمالي التفاعل',  get: p => (p.reactions || 0) + (p.comments || 0) + (p.shares || 0) },
+  { id: 'date',                label: 'التاريخ',        get: p => splitDateTime(p.published_at || p.scraped_at).date },
+  { id: 'time',                label: 'الوقت',          get: p => splitDateTime(p.published_at || p.scraped_at).time },
+  { id: 'datetime',            label: 'تاريخ + وقت',    get: p => p.published_at || p.scraped_at || '', off: true },
+  { id: 'source',              label: 'المصدر',         get: p => p.source || '' },
+  { id: 'post_url',            label: 'رابط المنشور',   get: p => p.post_url || '' },
+  { id: 'image_url',           label: 'رابط الصورة',    get: p => p.image_url || '', off: true },
+  { id: 'video_url',           label: 'رابط الفيديو',   get: p => p.video_url || '', off: true },
+  { id: 'media_count',         label: 'عدد الميديا',    get: p => (p.media || []).length, off: true },
+  { id: 'hashtags',            label: 'هاشتاقات',       get: p => (p.hashtags || []).join(' '), off: true },
+  { id: 'comments_count_real', label: 'تعليقات منزّلة', get: p => (p.comments_data || []).length, off: true },
+  { id: 'author_name',         label: 'الكاتب',         get: p => p.author_name || '', off: true },
+  { id: 'is_pinned',           label: 'مثبّت؟',         get: p => p.is_pinned ? '✓' : '', off: true },
+  { id: 'is_sponsored',        label: 'مموَّل؟',         get: p => p.is_sponsored ? '✓' : '', off: true },
+  { id: 'scraped_at_date',     label: 'تاريخ السحب',    get: p => splitDateTime(p.scraped_at).date, off: true },
+  { id: 'scraped_at_time',     label: 'وقت السحب',      get: p => splitDateTime(p.scraped_at).time, off: true },
+];
+
+function splitDateTime(iso) {
+  if (!iso) return { date: '', time: '' };
+  const s = String(iso);
+  // ISO 8601: 2026-04-25T14:30:00 — split at T
+  // Or "2026-04-25 14:30:00" — split at space (MySQL DATETIME format)
+  let tIdx = s.indexOf('T');
+  if (tIdx === -1) tIdx = s.indexOf(' ');
+  if (tIdx === -1) return { date: s.slice(0, 10), time: '' };
+  return { date: s.slice(0, 10), time: s.slice(tIdx + 1, tIdx + 9) };
+}
+
 function exportCSV() {
+  // الزر القديم - الآن يفتح modal التصدير المتقدم
+  openExportModal();
+}
+
+function openExportModal() {
+  const posts = STATE.filtered || [];
+  if (posts.length === 0) {
+    showToast('لا توجد منشورات للتصدير - عدّل الفلاتر أولاً', 'error');
+    return;
+  }
+  const totalCount = STATE.allPosts.length;
+  const filteredCount = posts.length;
+  const isFiltered = filteredCount !== totalCount;
+
+  openModal('📤 تصدير المنشورات', `
+    <div class="export-modal">
+      <div class="export-info">
+        <div class="export-stat">
+          <span class="export-num">${formatNum(filteredCount)}</span>
+          <span class="export-lbl">منشور</span>
+        </div>
+        ${isFiltered
+          ? `<div class="alert alert-info" style="margin:0;flex:1">
+               🔍 <strong>تصدير وفق الفلاتر النشطة</strong> — ${filteredCount} من أصل ${totalCount}.
+             </div>`
+          : `<div class="alert" style="margin:0;flex:1;background:var(--ink-50);border-color:var(--border)">
+               ℹ️ سيُصدَّر <strong>كل ${totalCount}</strong> منشور (لا توجد فلاتر نشطة).
+             </div>`}
+      </div>
+
+      <div class="export-section">
+        <h4>📋 صيغة الملف</h4>
+        <div class="format-options">
+          <label class="format-option">
+            <input type="radio" name="exportFormat" value="xlsx" checked>
+            <span class="format-icon">📊</span>
+            <strong>Excel (.xlsx)</strong>
+            <small>الأفضل للمشاركة والتحليل</small>
+          </label>
+          <label class="format-option">
+            <input type="radio" name="exportFormat" value="csv">
+            <span class="format-icon">📄</span>
+            <strong>CSV</strong>
+            <small>متوافق مع كل البرامج</small>
+          </label>
+          <label class="format-option">
+            <input type="radio" name="exportFormat" value="json">
+            <span class="format-icon">📦</span>
+            <strong>JSON</strong>
+            <small>للمطورين والـ APIs</small>
+          </label>
+        </div>
+      </div>
+
+      <div class="export-section">
+        <div class="export-section-head">
+          <h4>🎛️ الحقول المضمّنة</h4>
+          <div class="export-section-actions">
+            <button class="btn-refresh btn-sm" id="exportSelectAll" type="button">حدد الكل</button>
+            <button class="btn-refresh btn-sm" id="exportSelectNone" type="button">مسح</button>
+            <button class="btn-refresh btn-sm" id="exportSelectDefaults" type="button">افتراضي</button>
+          </div>
+        </div>
+        <p class="note" style="margin:6px 0">اسحب لإعادة الترتيب · اضغط لتفعيل/إلغاء</p>
+        <div class="export-fields" id="exportFields">
+          ${EXPORT_FIELDS.map(f => `
+            <label class="export-field-item ${f.off ? '' : 'checked'}" draggable="true" data-field="${f.id}">
+              <span class="drag-grip" aria-hidden="true">⠿</span>
+              <input type="checkbox" class="export-field-cb" ${f.off ? '' : 'checked'}>
+              <span>${escapeHtml(f.label)}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="export-section">
+        <h4>↕️ ترتيب الصفوف</h4>
+        <select id="exportSort" class="select" style="max-width:300px">
+          <option value="newest">الأحدث أولاً</option>
+          <option value="oldest">الأقدم أولاً</option>
+          <option value="reactions">الأعلى تفاعلاً</option>
+          <option value="comments">الأكثر تعليقاً</option>
+          <option value="shares">الأكثر مشاركة</option>
+          <option value="page">حسب اسم الصفحة</option>
+        </select>
+      </div>
+
+      <div class="export-section">
+        <h4>🔢 عدد المنشورات</h4>
+        <div class="form-inline" style="gap:8px;align-items:center;flex-wrap:wrap">
+          <label class="radio-chip">
+            <input type="radio" name="exportLimit" value="all" checked>
+            <span>الكل (${filteredCount})</span>
+          </label>
+          <label class="radio-chip">
+            <input type="radio" name="exportLimit" value="custom">
+            <span>عدد محدد</span>
+          </label>
+          <input type="number" id="exportLimitN" class="input" min="1" max="${filteredCount}" value="100" placeholder="مثلاً 100" style="max-width:160px" disabled>
+        </div>
+      </div>
+
+      <div class="export-section">
+        <h4>📁 اسم الملف</h4>
+        <input type="text" id="exportFilename" class="input" placeholder="marsad_posts" dir="ltr"
+               value="marsad_posts_${new Date().toISOString().slice(0, 10)}">
+      </div>
+
+      <div class="export-actions">
+        <button class="btn-refresh" id="exportCancelBtn" type="button">إلغاء</button>
+        <button class="btn-trigger" id="exportConfirmBtn" type="button">📤 تصدير</button>
+      </div>
+    </div>
+  `, 'lg');
+
+  bindExportModal();
+}
+
+function bindExportModal() {
+  const fieldsEl = document.getElementById('exportFields');
+
+  fieldsEl.querySelectorAll('.export-field-item').forEach(item => {
+    const cb = item.querySelector('.export-field-cb');
+    item.addEventListener('click', (e) => {
+      if (e.target === cb) return;
+      cb.checked = !cb.checked;
+      item.classList.toggle('checked', cb.checked);
+    });
+    cb.addEventListener('change', () => item.classList.toggle('checked', cb.checked));
+  });
+
+  // Drag & drop reorder
+  let dragged = null;
+  fieldsEl.querySelectorAll('.export-field-item').forEach(item => {
+    item.addEventListener('dragstart', (e) => {
+      dragged = item;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      fieldsEl.querySelectorAll('.export-field-item').forEach(i => i.classList.remove('drag-over'));
+      dragged = null;
+    });
+    item.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (item === dragged) return;
+      item.classList.add('drag-over');
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+    item.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!dragged || dragged === item) return;
+      const rect = item.getBoundingClientRect();
+      const after = (e.clientY - rect.top) > rect.height / 2;
+      item.parentNode.insertBefore(dragged, after ? item.nextSibling : item);
+    });
+  });
+
+  document.getElementById('exportSelectAll')?.addEventListener('click', () => {
+    fieldsEl.querySelectorAll('.export-field-item').forEach(i => {
+      i.querySelector('input').checked = true;
+      i.classList.add('checked');
+    });
+  });
+  document.getElementById('exportSelectNone')?.addEventListener('click', () => {
+    fieldsEl.querySelectorAll('.export-field-item').forEach(i => {
+      i.querySelector('input').checked = false;
+      i.classList.remove('checked');
+    });
+  });
+  document.getElementById('exportSelectDefaults')?.addEventListener('click', () => {
+    fieldsEl.querySelectorAll('.export-field-item').forEach(i => {
+      const fid = i.dataset.field;
+      const def = EXPORT_FIELDS.find(f => f.id === fid);
+      const on = def && !def.off;
+      i.querySelector('input').checked = on;
+      i.classList.toggle('checked', on);
+    });
+  });
+
+  document.querySelectorAll('input[name="exportLimit"]').forEach(r => {
+    r.addEventListener('change', () => {
+      document.getElementById('exportLimitN').disabled = r.value !== 'custom';
+    });
+  });
+
+  document.getElementById('exportCancelBtn')?.addEventListener('click', closeModal);
+  document.getElementById('exportConfirmBtn')?.addEventListener('click', performExport);
+}
+
+async function performExport() {
+  const btn = document.getElementById('exportConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ جاري التحضير…';
+
+  try {
+    const fmt = document.querySelector('input[name="exportFormat"]:checked').value;
+    const sort = document.getElementById('exportSort').value;
+    const filename = (document.getElementById('exportFilename').value.trim() || 'marsad_posts');
+
+    const fieldsOrder = Array.from(document.querySelectorAll('#exportFields .export-field-item'));
+    const chosen = fieldsOrder
+      .filter(i => i.querySelector('input').checked)
+      .map(i => EXPORT_FIELDS.find(f => f.id === i.dataset.field))
+      .filter(Boolean);
+
+    if (!chosen.length) {
+      showToast('اختر حقلاً واحداً على الأقل', 'error');
+      btn.disabled = false;
+      btn.textContent = '📤 تصدير';
+      return;
+    }
+
+    let posts = [...STATE.filtered];
+    posts.sort((a, b) => {
+      const aDate = new Date(a.published_at || a.scraped_at || 0);
+      const bDate = new Date(b.published_at || b.scraped_at || 0);
+      switch (sort) {
+        case 'oldest':    return aDate - bDate;
+        case 'reactions': return (b.reactions || 0) - (a.reactions || 0);
+        case 'comments':  return (b.comments || 0) - (a.comments || 0);
+        case 'shares':    return (b.shares || 0) - (a.shares || 0);
+        case 'page':      return (a.page_name || '').localeCompare(b.page_name || '', 'ar');
+        case 'newest':
+        default:          return bDate - aDate;
+      }
+    });
+
+    const limitMode = document.querySelector('input[name="exportLimit"]:checked').value;
+    if (limitMode === 'custom') {
+      const n = parseInt(document.getElementById('exportLimitN').value) || posts.length;
+      posts = posts.slice(0, n);
+    }
+
+    const headers = chosen.map(f => f.label);
+    const rows = posts.map(p => chosen.map(f => f.get(p)));
+
+    if (fmt === 'csv') {
+      _exportPostsCsv(headers, rows, filename + '.csv');
+    } else if (fmt === 'json') {
+      const objs = posts.map(p => {
+        const o = {};
+        chosen.forEach(f => { o[f.label] = f.get(p); });
+        return o;
+      });
+      _exportPostsJson(objs, filename + '.json');
+    } else {
+      showToast('⏳ جاري تحميل مكتبة Excel…', 'info');
+      await loadXLSXLib();
+      _exportPostsXlsx(headers, rows, filename + '.xlsx');
+    }
+
+    showToast(`✅ تم تصدير ${posts.length} منشور`, 'success');
+    closeModal();
+  } catch (e) {
+    showToast('فشل التصدير: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '📤 تصدير';
+  }
+}
+
+function _exportPostsCsv(headers, rows, filename) {
+  const escape = (v) => {
+    const s = String(v ?? '');
+    if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  };
+  const csv = '﻿' + [
+    headers.map(escape).join(','),
+    ...rows.map(r => r.map(escape).join(',')),
+  ].join('\r\n');
+  _triggerExportDownload(new Blob([csv], { type: 'text/csv;charset=utf-8' }), filename);
+}
+
+function _exportPostsJson(objs, filename) {
+  _triggerExportDownload(
+    new Blob([JSON.stringify(objs, null, 2)], { type: 'application/json;charset=utf-8' }),
+    filename
+  );
+}
+
+function _exportPostsXlsx(headers, rows, filename) {
+  if (!window.XLSX) throw new Error('XLSX library not loaded');
+  const aoa = [headers, ...rows];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  if (!ws['!views']) ws['!views'] = [{}];
+  ws['!views'][0].RTL = true;
+  ws['!cols'] = headers.map(h => {
+    const len = String(h).length;
+    return { wch: Math.min(Math.max(len + 4, 12), 60) };
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'المنشورات');
+  XLSX.writeFile(wb, filename);
+}
+
+function _triggerExportDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportCSV_OLD_DEPRECATED_DO_NOT_USE() {
   if (STATE.filtered.length === 0) {
     showToast('لا توجد منشورات للتصدير', 'error');
     return;

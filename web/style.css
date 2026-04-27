@@ -2801,6 +2801,220 @@ button:active {
   50%      { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); }
 }
 
+/* ================================================================
+   Advanced Export Modal
+   ================================================================ */
+.export-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.export-info {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.export-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px;
+  background: linear-gradient(135deg, var(--accent-50), var(--bg-elevated));
+  border: 1px solid var(--accent-400);
+  border-radius: var(--radius);
+  min-width: 100px;
+}
+
+.export-stat .export-num {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--accent-700);
+  line-height: 1;
+}
+
+.export-stat .export-lbl {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.export-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.export-section:last-child {
+  border-bottom: 0;
+}
+
+.export-section h4 {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  margin: 0;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.export-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.export-section-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Format radios */
+.format-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.format-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  background: var(--bg-elevated);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s var(--ease);
+  position: relative;
+}
+
+.format-option input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.format-option:hover {
+  border-color: var(--accent-400);
+}
+
+.format-option:has(input:checked) {
+  border-color: var(--accent-600);
+  background: var(--accent-50);
+  box-shadow: 0 2px 8px -1px rgba(249,115,22,0.2);
+}
+
+.format-option .format-icon {
+  font-size: 1.4rem;
+  margin-bottom: 4px;
+}
+
+.format-option strong {
+  font-family: var(--font-display);
+  color: var(--text);
+}
+
+.format-option:has(input:checked) strong {
+  color: var(--accent-700);
+}
+
+.format-option small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+/* Field picker (drag + select) */
+.export-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--ink-50);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.export-field-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.export-field-item:hover {
+  border-color: var(--accent-400);
+}
+
+.export-field-item.checked {
+  background: var(--accent-50);
+  border-color: var(--accent-500);
+  color: var(--accent-900);
+  font-weight: 600;
+}
+
+.export-field-item input[type="checkbox"] {
+  pointer-events: none;
+  accent-color: var(--accent-600);
+}
+
+.export-field-item .drag-grip {
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: grab;
+  opacity: 0.6;
+}
+
+.export-field-item:hover .drag-grip {
+  opacity: 1;
+}
+
+.export-field-item.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.export-field-item.drag-over {
+  border-style: dashed;
+  border-color: var(--accent-600);
+  background: var(--accent-100);
+}
+
+.export-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.export-actions .btn-trigger {
+  min-width: 140px;
+}
+
+@media (max-width: 640px) {
+  .export-fields { grid-template-columns: 1fr; max-height: 240px; }
+  .format-options { grid-template-columns: 1fr; }
+}
+
 /* Trigger modal: pages mode + quick presets */
 .trigger-pages-mode {
   display: flex;
