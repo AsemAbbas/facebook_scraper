@@ -1687,9 +1687,10 @@ function openPagesModal() {
     <div class="pages-manager">
       <div class="pages-toolbar">
         <button class="btn-trigger btn-sm" id="addPageBtn" type="button">+ إضافة صفحة</button>
-        <button class="btn-refresh btn-sm" id="importPagesJson" type="button" title="استيراد من Excel/CSV/JSON">📥 استيراد</button>
-        <button class="btn-refresh btn-sm" id="exportPagesJson" type="button" title="تصدير إلى Excel/CSV">📤 تصدير CSV</button>
-        <button class="btn-refresh btn-sm" id="downloadPagesTemplate" type="button" title="تحميل قالب CSV فاضي">📋 قالب CSV</button>
+        <button class="btn-refresh btn-sm" id="importPagesJson" type="button" title="استيراد من Excel (.xlsx) أو CSV أو JSON">📥 استيراد</button>
+        <button class="btn-refresh btn-sm" id="exportPagesXlsx" type="button" title="تصدير إلى Excel (.xlsx)">📊 تصدير Excel</button>
+        <button class="btn-refresh btn-sm" id="exportPagesJson" type="button" title="تصدير إلى CSV">📤 تصدير CSV</button>
+        <button class="btn-refresh btn-sm" id="downloadPagesTemplate" type="button" title="تحميل قالب فاضي (Excel)">📋 قالب</button>
       </div>
 
       <div class="pages-search-bar">
@@ -1718,16 +1719,13 @@ function openPagesModal() {
       </div>
 
       <div class="pages-footer">
-        ${hasBackend
-          ? `<button class="btn-trigger btn-full" id="savePagesLocal" type="button">💾 حفظ كل التغييرات</button>`
-          : `<button class="btn-trigger" id="savePagesLocal" type="button">حفظ محلياً</button>
-             <button class="btn-refresh" id="savePagesGitHub" type="button">💾 حفظ في GitHub</button>`}
+        <button class="btn-trigger btn-full" id="savePagesLocal" type="button">💾 حفظ كل التغييرات</button>
       </div>
 
       <p class="note">
-        ${hasBackend
-          ? `<strong>💡 الاستيراد من Excel:</strong> صدّر قالب CSV، افتحه في Excel، عبّي الأعمدة (عدد المتابعين، اسم الصفحة، City، NumberOfPost، Page Link)، احفظه كـ CSV، ثم استورده هنا. الأعمدة بالعربية أو الإنجليزية.`
-          : `<strong>ملاحظة:</strong> بعد الحفظ، شغّل سحب جديد من زر "سحب الآن".`}
+        <strong>💡 الاستيراد من Excel:</strong> صدّر القالب، افتحه في Excel، عبّي الأعمدة
+        (عدد المتابعين، اسم الصفحة، City، NumberOfPost، Page Link) بأي ترتيب،
+        احفظه (.xlsx أو CSV)، ثم استورده هنا. كل الصفحات تُحفظ في قاعدة بيانات السيرفر مباشرة.
       </p>
     </div>
   `, 'lg');
@@ -1922,7 +1920,7 @@ function bindPagesManagerEvents() {
     });
   });
 
-  // ===== CSV / Excel export — same headers as the Excel screenshot =====
+  // ===== CSV export =====
   document.getElementById('exportPagesJson').addEventListener('click', () => {
     syncPagesFromUI();
     const csv = pagesToCsv(STATE.pagesConfig);
@@ -1937,22 +1935,53 @@ function bindPagesManagerEvents() {
     showToast(`تم تصدير ${STATE.pagesConfig.length} صفحة كـ CSV`, 'success');
   });
 
-  // ===== Import from CSV (Excel-saved) or JSON =====
+  // ===== XLSX export (real Excel binary) =====
+  document.getElementById('exportPagesXlsx')?.addEventListener('click', async () => {
+    syncPagesFromUI();
+    if (STATE.pagesConfig.length === 0) {
+      showToast('لا توجد صفحات للتصدير', 'error');
+      return;
+    }
+    try {
+      showToast('⏳ جاري تحميل مكتبة Excel…', 'info');
+      await loadXLSXLib();
+      pagesToXlsx(STATE.pagesConfig, `pages_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      showToast(`تم تصدير ${STATE.pagesConfig.length} صفحة كـ Excel (.xlsx)`, 'success');
+    } catch (err) {
+      showToast('فشل التصدير: ' + err.message, 'error');
+    }
+  });
+
+  // ===== Import from XLSX / CSV / JSON =====
   document.getElementById('importPagesJson').addEventListener('click', () => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.csv,.tsv,.txt,application/json';
+    input.accept = '.xlsx,.xls,.csv,.tsv,.txt,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
     input.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
       try {
-        const text = await file.text();
+        const fname = file.name.toLowerCase();
         let pages = [];
-        if (file.name.toLowerCase().endsWith('.json') || text.trim().startsWith('{')) {
+
+        if (fname.endsWith('.xlsx') || fname.endsWith('.xls')) {
+          showToast('⏳ جاري تحميل مكتبة Excel…', 'info');
+          await loadXLSXLib();
+          const buffer = await file.arrayBuffer();
+          pages = xlsxToPages(buffer);
+        } else if (fname.endsWith('.json')) {
+          const text = await file.text();
           const data = JSON.parse(text);
           pages = Array.isArray(data) ? data : (data.pages || []);
         } else {
-          pages = csvToPages(text);
+          // CSV / TSV / TXT
+          const text = await file.text();
+          if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
+            const data = JSON.parse(text);
+            pages = Array.isArray(data) ? data : (data.pages || []);
+          } else {
+            pages = csvToPages(text);
+          }
         }
         if (!Array.isArray(pages) || pages.length === 0) {
           showToast('لم يتم العثور على صفحات في الملف', 'error');
@@ -2012,62 +2041,66 @@ function bindPagesManagerEvents() {
     input.click();
   });
 
-  document.getElementById('savePagesLocal').addEventListener('click', async () => {
+  document.getElementById('savePagesLocal').addEventListener('click', async (e) => {
     syncPagesFromUI();
-    // Backend mode: direct save to pages.json
-    if (STATE.hasBackend) {
-      try {
-        const res = await fetch('/api/pages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pages: STATE.pagesConfig }),
-        });
-        if (res.ok) {
-          showToast('✅ تم الحفظ في pages.json', 'success');
-        } else {
-          showToast('فشل الحفظ', 'error');
-        }
-      } catch (e) {
-        showToast('خطأ: ' + e.message, 'error');
-      }
-      return;
-    }
-    // Fallback: localStorage
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const origText = btn.textContent;
+    btn.textContent = '⏳ جاري الحفظ…';
     try {
-      localStorage.setItem(LS.pagesConfig, JSON.stringify(STATE.pagesConfig));
-      showToast('✅ تم الحفظ محلياً (localStorage)', 'success');
-    } catch (e) {
-      showToast('فشل الحفظ', 'error');
+      const res = await fetch('/api/pages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ pages: STATE.pagesConfig }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showToast(`✅ تم حفظ ${data.count || STATE.pagesConfig.length} صفحة في قاعدة البيانات`, 'success');
+        // مزامنة الـ STATE من السيرفر للحصول على slugs النهائية + ids
+        await loadPagesConfig();
+      } else if (res.status === 401) {
+        showToast('انتهت الجلسة - أعد تسجيل الدخول', 'error');
+      } else {
+        showToast(data.error || 'فشل الحفظ', 'error');
+      }
+    } catch (err) {
+      showToast('خطأ في الاتصال: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
     }
   });
 
-  const ghBtn = document.getElementById('savePagesGitHub');
-  if (ghBtn) {
-    ghBtn.addEventListener('click', () => {
-      syncPagesFromUI();
-      saveToGitHub();
-    });
-  }
+  // (GitHub save removed — pages now persist directly to MySQL via /api/pages)
 
-  // === Download empty CSV template ===
+  // === Download empty Excel template ===
   const tplBtn = document.getElementById('downloadPagesTemplate');
   if (tplBtn) {
-    tplBtn.addEventListener('click', () => {
+    tplBtn.addEventListener('click', async () => {
       const sample = [
         { name: 'تلفزيون فلسطين', city: 'عام', followers: 6218372, max_posts: 45,
           url: 'https://www.facebook.com/PalestineTV', slug: '', source: 'auto', enabled: true },
         { name: 'وكالة وفا', city: 'عام', followers: 795113, max_posts: 40,
           url: 'https://www.facebook.com/wafagency', slug: '', source: 'auto', enabled: true },
       ];
-      const csv = pagesToCsv(sample);
-      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'pages_template.csv';
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast('تم تنزيل القالب — افتحه في Excel، املأ البيانات، ثم استورده', 'success');
+      try {
+        showToast('⏳ جاري تحميل مكتبة Excel…', 'info');
+        await loadXLSXLib();
+        pagesToXlsx(sample, 'pages_template.xlsx');
+        showToast('تم تنزيل القالب — افتحه في Excel، املأ البيانات، ثم استورده', 'success');
+      } catch (err) {
+        // Fallback: CSV
+        const csv = pagesToCsv(sample);
+        const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'pages_template.csv';
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('تم تنزيل قالب CSV (تعذّر تحميل مكتبة Excel)', 'warn');
+      }
     });
   }
 
@@ -2203,16 +2236,40 @@ function syncPagesFromUI() {
 
 const CSV_HEADERS_AR = ['عدد المتابعين', 'اسم الصفحة', 'City', 'NumberOfPost', 'Page Link'];
 
-// Aliases عشان نتعرف على الأعمدة حتى لو الـ Excel غيّر التسمية
+// Aliases عشان نتعرف على الأعمدة حتى لو الـ Excel غيّر التسمية.
+// نستخدم exact-match على header مُطبَّع (lowercase + trimmed + بدون whitespace زائد).
 const HEADER_ALIASES = {
-  followers:  ['عدد المتابعين', 'followers', 'follower', 'fans', 'متابعين', 'followerscount', 'followers_count'],
-  name:       ['اسم الصفحة', 'name', 'page name', 'page_name', 'الاسم', 'الصفحة', 'page'],
-  city:       ['city', 'المدينة', 'مدينة', 'المنطقة'],
-  max_posts:  ['numberofpost', 'number of post', 'max_posts', 'maxposts', 'عدد المنشورات', 'حد المنشورات'],
-  url:        ['page link', 'pagelink', 'url', 'link', 'الرابط', 'رابط الصفحة'],
-  slug:       ['slug', 'id', 'الـid', 'كود'],
-  source:     ['source', 'المصدر', 'مصدر'],
-  enabled:    ['enabled', 'مفعل', 'مفعّل', 'active'],
+  followers: [
+    'عدد المتابعين', 'followers', 'follower', 'fans', 'متابعين',
+    'followerscount', 'followers_count', 'follower count', 'follower_count',
+    'subscribers', 'مشتركين',
+  ],
+  name: [
+    'اسم الصفحة', 'name', 'page name', 'page_name', 'pagename', 'الاسم',
+    'page title', 'title',
+  ],
+  city: [
+    'city', 'المدينة', 'مدينة', 'المنطقة', 'منطقة', 'الموقع', 'location',
+  ],
+  max_posts: [
+    'numberofpost', 'number of post', 'numberofposts', 'number of posts',
+    'max_posts', 'maxposts', 'max posts', 'عدد المنشورات', 'حد المنشورات',
+    'post count', 'posts',
+  ],
+  url: [
+    'page link', 'pagelink', 'page_link', 'page url', 'page_url',
+    'url', 'link', 'الرابط', 'رابط الصفحة', 'رابط', 'fb link', 'rss',
+    'feed url', 'feed', 'rss url',
+  ],
+  slug: [
+    'slug', 'id', 'كود', 'كود الصفحة',
+  ],
+  source: [
+    'source', 'المصدر', 'مصدر', 'المصدر/source',
+  ],
+  enabled: [
+    'enabled', 'مفعل', 'مفعّل', 'active', 'الحالة', 'حالة',
+  ],
 };
 
 function _csvEscape(v) {
@@ -2256,13 +2313,141 @@ function _parseCsvLine(line) {
 }
 
 function _findHeaderIndex(headers, fieldKey) {
-  const aliases = HEADER_ALIASES[fieldKey] || [];
-  const norm = h => h.replace(/\s+/g, ' ').trim().toLowerCase();
+  const aliases = (HEADER_ALIASES[fieldKey] || []).map(a => _norm(a));
+  // 1) exact match أولاً (الأكثر دقة)
   for (let i = 0; i < headers.length; i++) {
-    const h = norm(headers[i]);
-    if (aliases.some(a => norm(a) === h || h.includes(norm(a)))) return i;
+    if (aliases.includes(_norm(headers[i]))) return i;
+  }
+  // 2) substring match (لكن نقيد بـ aliases طولها 4+ chars عشان نتجنب false positives
+  //    مثل alias='page' يطابق header='Page Link' وهو URL مش name)
+  for (let i = 0; i < headers.length; i++) {
+    const h = _norm(headers[i]);
+    if (aliases.some(a => a.length >= 4 && h.includes(a))) return i;
   }
   return -1;
+}
+
+function _norm(s) {
+  return String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// ==================== XLSX export ====================
+/**
+ * يكتب workbook بنفس ترتيب الأعمدة في صورة الإكسل الأصلية
+ * ويفعّل الـ RTL على الورقة عشان Excel يفتحها يميناً.
+ */
+function pagesToXlsx(pages, filename) {
+  if (!window.XLSX) throw new Error('XLSX library not loaded');
+  const aoa = [
+    CSV_HEADERS_AR,
+    ...pages.map(p => [
+      p.followers || 0,
+      p.name || '',
+      p.city || '',
+      p.max_posts || 30,
+      p.url || '',
+    ]),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // RTL view
+  if (!ws['!views']) ws['!views'] = [{}];
+  ws['!views'][0].RTL = true;
+  // Column widths
+  ws['!cols'] = [
+    { wch: 14 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 50 },
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'الصفحات');
+  XLSX.writeFile(wb, filename);
+}
+
+// ==================== XLSX import (lazy-load SheetJS) ====================
+let _xlsxLoadPromise = null;
+
+function loadXLSXLib() {
+  if (window.XLSX) return Promise.resolve();
+  if (_xlsxLoadPromise) return _xlsxLoadPromise;
+  _xlsxLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    // مكتبة SheetJS - نسخة community مجانية
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      _xlsxLoadPromise = null;
+      reject(new Error('فشل تحميل مكتبة Excel - تحقق من الاتصال بالإنترنت'));
+    };
+    document.head.appendChild(s);
+  });
+  return _xlsxLoadPromise;
+}
+
+/**
+ * يحوّل buffer لـ xlsx إلى array of {col_header: value} ثم يطبّق
+ * نفس HEADER_ALIASES الموجود لـ CSV. هذا يعني أن الـ xlsx يقبل
+ * نفس الأسماء بأي ترتيب (بالعربي أو الإنجليزي).
+ */
+function xlsxToPages(buffer) {
+  if (!window.XLSX) throw new Error('XLSX library not loaded');
+  const wb = XLSX.read(buffer, { type: 'array' });
+  const sheetName = wb.SheetNames[0];
+  if (!sheetName) throw new Error('الملف لا يحوي أي ورقة (sheet)');
+  const sheet = wb.Sheets[sheetName];
+
+  // sheet_to_json with header:1 returns array of arrays — أسهل للتعامل معه
+  // مع تنوّع الأعمدة بدون افتراض أن الـ header في الصف الأول دائماً
+  const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
+  if (!aoa.length) return [];
+
+  // خذ أول صف فيه أكثر من خلية فيها نص → headers
+  let headerRowIdx = 0;
+  for (let i = 0; i < Math.min(aoa.length, 5); i++) {
+    const nonEmpty = aoa[i].filter(c => String(c).trim()).length;
+    if (nonEmpty >= 2) { headerRowIdx = i; break; }
+  }
+
+  const headers = (aoa[headerRowIdx] || []).map(h => String(h).trim());
+  const idx = {
+    followers: _findHeaderIndex(headers, 'followers'),
+    name:      _findHeaderIndex(headers, 'name'),
+    city:      _findHeaderIndex(headers, 'city'),
+    max_posts: _findHeaderIndex(headers, 'max_posts'),
+    url:       _findHeaderIndex(headers, 'url'),
+    slug:      _findHeaderIndex(headers, 'slug'),
+    source:    _findHeaderIndex(headers, 'source'),
+    enabled:   _findHeaderIndex(headers, 'enabled'),
+  };
+
+  if (idx.name === -1 && idx.url === -1) {
+    throw new Error('لم نجد عمود "اسم الصفحة" أو "Page Link" في الإكسل. تأكد من أن أسماء الأعمدة موجودة في أول صف.');
+  }
+
+  const pages = [];
+  for (let r = headerRowIdx + 1; r < aoa.length; r++) {
+    const row = aoa[r];
+    if (!row || !row.some(c => String(c).trim())) continue;   // skip فاضي
+    const get = (k) => idx[k] !== -1 ? String(row[idx[k]] ?? '').trim() : '';
+
+    const name = get('name');
+    const url = get('url');
+    if (!url && !name) continue;
+
+    const followersRaw = get('followers').replace(/[,\s]/g, '');
+    const enabledRaw = get('enabled').toLowerCase();
+
+    pages.push({
+      name: name || '(بدون اسم)',
+      url,
+      slug: get('slug') || slugify(name, url),
+      city: get('city'),
+      followers: parseInt(followersRaw) || 0,
+      max_posts: parseInt(get('max_posts')) || 30,
+      source: get('source') || 'auto',
+      enabled: idx.enabled === -1 ? true
+                                  : !['0','no','false','لا','معطل','disabled'].includes(enabledRaw),
+    });
+  }
+  return pages;
 }
 
 function csvToPages(text) {
