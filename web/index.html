@@ -143,6 +143,17 @@
     </select>
   </div>
   <div class="filter-group">
+    <label class="filter-label">نوع المنشور</label>
+    <select id="postTypeFilter" class="select">
+      <option value="all">كل الأنواع</option>
+      <option value="text">📝 نص</option>
+      <option value="photo">🖼 صور</option>
+      <option value="video">🎥 فيديو</option>
+      <option value="link">🔗 رابط</option>
+      <option value="live">🔴 مباشر</option>
+    </select>
+  </div>
+  <div class="filter-group">
     <label class="filter-label">الترتيب</label>
     <select id="sortFilter" class="select">
       <option value="newest">الأحدث أولاً</option>
@@ -172,6 +183,10 @@
     <input type="number" id="minReactions" class="input" placeholder="0" min="0">
   </div>
   <div class="filter-group">
+    <label class="filter-label">حد أقصى تفاعل</label>
+    <input type="number" id="maxReactions" class="input" placeholder="∞" min="0">
+  </div>
+  <div class="filter-group">
     <label class="filter-label">حد أدنى تعليقات</label>
     <input type="number" id="minComments" class="input" placeholder="0" min="0">
   </div>
@@ -179,7 +194,11 @@
     <label class="filter-label">فلاتر سريعة</label>
     <div class="filter-checkboxes">
       <label class="checkbox-chip"><input type="checkbox" id="hasImageOnly"><span>🖼 بصور</span></label>
+      <label class="checkbox-chip"><input type="checkbox" id="hasVideoOnly"><span>🎥 بفيديو</span></label>
+      <label class="checkbox-chip"><input type="checkbox" id="textOnly"><span>📝 نص فقط</span></label>
       <label class="checkbox-chip"><input type="checkbox" id="highEngagementOnly"><span>🔥 عالي</span></label>
+      <label class="checkbox-chip"><input type="checkbox" id="lowEngagementOnly"><span>❄️ منخفض</span></label>
+      <label class="checkbox-chip"><input type="checkbox" id="hasCommentsOnly"><span>💬 له تعليقات</span></label>
     </div>
   </div>
   <div class="filter-group">
@@ -205,6 +224,19 @@
     <span id="activeFiltersBadge" class="active-filters-badge" hidden></span>
   </div>
   <div class="meta-right">
+    <div class="layout-toggle" role="group" aria-label="عرض">
+      <button class="layout-btn active" data-layout="cards" type="button" title="بطاقات">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+          <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
+      </button>
+      <button class="layout-btn" data-layout="list" type="button" title="قائمة">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+    </div>
     <button class="btn-meta" id="selectAllBtn" title="تحديد الكل">
       <input type="checkbox" id="selectAllCheckbox"> <span>تحديد</span>
     </button>

@@ -1171,6 +1171,9 @@ def api_media_proxy():
     """
     Proxy لصور/فيديوهات خارجية (مع تحقق من الـ host لمنع SSRF).
     استخدام:  /api/media-proxy?u=<encoded-url>
+
+    يدعم HTTP Range requests (ضروري لتشغيل الفيديو في <video>).
+    يبثّ chunks بدلاً من تحميل الملف كاملاً في الذاكرة.
     """
     raw_url = request.args.get("u", "").strip()
     if not raw_url:
@@ -1188,35 +1191,71 @@ def api_media_proxy():
     if not host:
         return jsonify({"error": "no host"}), 400
 
-    # whitelist للـ hosts (لمنع SSRF و proxy abuse)
     if not any(allowed in host for allowed in _ALLOWED_MEDIA_HOSTS):
         return jsonify({"error": f"host not in allowlist: {host}"}), 403
 
-    # local/internal addresses block
     if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
         return jsonify({"error": "local hosts blocked"}), 403
 
+    # نمرّر Range request من العميل عشان الفيديو يقدر يبدأ التشغيل
+    # ويعمل seeking. الـ <video> يطلب أول chunk صغير قبل أي شيء.
+    upstream_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "image/*,video/*,*/*",
+        "Referer": "https://www.facebook.com/",
+        "Accept-Encoding": "identity",   # لا تطلب gzip - يكسر الـ Range
+    }
+    range_hdr = request.headers.get("Range")
+    if range_hdr:
+        upstream_headers["Range"] = range_hdr
+
     try:
-        req = urllib.request.Request(
-            raw_url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Marsad Media Proxy)",
-                "Accept": "image/*,video/*,*/*",
-                "Referer": "https://www.facebook.com/",
-            }
-        )
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            content_type = resp.headers.get("Content-Type", "application/octet-stream")
-            data = resp.read()
-            flask_resp = make_response(data)
-            flask_resp.headers["Content-Type"] = content_type
-            flask_resp.headers["Cache-Control"] = "public, max-age=3600"
-            flask_resp.headers["X-Proxied-By"] = "marsad"
-            return flask_resp
+        req = urllib.request.Request(raw_url, headers=upstream_headers)
+        resp = urllib.request.urlopen(req, timeout=30)
     except urllib.error.HTTPError as e:
         return jsonify({"error": f"upstream {e.code}"}), e.code
     except Exception as e:
         return jsonify({"error": str(e)[:200]}), 502
+
+    # بناء headers رد العميل
+    upstream_status = resp.status if hasattr(resp, "status") else 200
+    upstream_ct = resp.headers.get("Content-Type", "application/octet-stream")
+    upstream_cl = resp.headers.get("Content-Length")
+    upstream_cr = resp.headers.get("Content-Range")
+    upstream_ar = resp.headers.get("Accept-Ranges", "bytes")
+
+    # streaming generator
+    def _stream():
+        try:
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
+    headers = {
+        "Content-Type": upstream_ct,
+        "Cache-Control": "public, max-age=3600",
+        "Accept-Ranges": upstream_ar,
+        "X-Proxied-By": "marsad",
+    }
+    if upstream_cl:
+        headers["Content-Length"] = upstream_cl
+    if upstream_cr:
+        headers["Content-Range"] = upstream_cr
+
+    return Response(
+        stream_with_context(_stream()),
+        status=upstream_status,
+        headers=headers,
+        direct_passthrough=True,
+    )
 
 
 # ======================================================================

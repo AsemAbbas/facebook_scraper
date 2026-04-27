@@ -35,9 +35,15 @@ const els = {
   dateFrom: document.getElementById('dateFrom'),
   dateTo: document.getElementById('dateTo'),
   minReactions: document.getElementById('minReactions'),
+  maxReactions: document.getElementById('maxReactions'),
   minComments: document.getElementById('minComments'),
+  postTypeFilter: document.getElementById('postTypeFilter'),
   hasImageOnly: document.getElementById('hasImageOnly'),
+  hasVideoOnly: document.getElementById('hasVideoOnly'),
+  textOnly: document.getElementById('textOnly'),
   highEngagementOnly: document.getElementById('highEngagementOnly'),
+  lowEngagementOnly: document.getElementById('lowEngagementOnly'),
+  hasCommentsOnly: document.getElementById('hasCommentsOnly'),
   resetFilters: document.getElementById('resetFilters'),
   // results
   postsGrid: document.getElementById('postsGrid'),
@@ -615,19 +621,52 @@ function applyFilters() {
     activeFilters++;
   }
 
+  const maxReact = parseInt(els.maxReactions?.value) || 0;
+  if (maxReact > 0) {
+    posts = posts.filter(p => (p.reactions || 0) <= maxReact);
+    activeFilters++;
+  }
+
   const minComm = parseInt(els.minComments.value) || 0;
   if (minComm > 0) {
     posts = posts.filter(p => (p.comments || 0) >= minComm);
     activeFilters++;
   }
 
-  if (els.hasImageOnly.checked) {
-    posts = posts.filter(p => !!p.image_url);
+  // فلتر نوع المنشور (dropdown)
+  const ptype = els.postTypeFilter?.value || 'all';
+  if (ptype !== 'all') {
+    posts = posts.filter(p => (p.post_type || 'text') === ptype);
     activeFilters++;
   }
 
-  if (els.highEngagementOnly.checked) {
+  if (els.hasImageOnly?.checked) {
+    posts = posts.filter(p => !!p.image_url || (p.media || []).some(m => m.type === 'image'));
+    activeFilters++;
+  }
+
+  if (els.hasVideoOnly?.checked) {
+    posts = posts.filter(p => !!p.video_url || (p.media || []).some(m => m.type === 'video'));
+    activeFilters++;
+  }
+
+  if (els.textOnly?.checked) {
+    posts = posts.filter(p => !p.image_url && !p.video_url && (p.media || []).length === 0);
+    activeFilters++;
+  }
+
+  if (els.highEngagementOnly?.checked) {
     posts = posts.filter(p => (p.reactions || 0) >= 1000);
+    activeFilters++;
+  }
+
+  if (els.lowEngagementOnly?.checked) {
+    posts = posts.filter(p => (p.reactions || 0) < 50);
+    activeFilters++;
+  }
+
+  if (els.hasCommentsOnly?.checked) {
+    posts = posts.filter(p => (p.comments || 0) > 0);
     activeFilters++;
   }
 
@@ -702,9 +741,15 @@ function resetAllFilters() {
   els.sourceFilter.value = 'all';
   els.searchInput.value = '';
   els.minReactions.value = '';
+  if (els.maxReactions) els.maxReactions.value = '';
   els.minComments.value = '';
+  if (els.postTypeFilter) els.postTypeFilter.value = 'all';
   els.hasImageOnly.checked = false;
+  if (els.hasVideoOnly) els.hasVideoOnly.checked = false;
+  if (els.textOnly) els.textOnly.checked = false;
   els.highEngagementOnly.checked = false;
+  if (els.lowEngagementOnly) els.lowEngagementOnly.checked = false;
+  if (els.hasCommentsOnly) els.hasCommentsOnly.checked = false;
   // إعادة تعيين التاريخ لآخر 24 ساعة
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -745,67 +790,14 @@ function renderPosts() {
     return;
   }
 
-  els.postsGrid.innerHTML = posts.slice(0, 100).map((post, i) => {
-    const reactions = post.reactions || 0;
-    const comments = post.comments || 0;
-    const shares = post.shares || 0;
-    const isHigh = reactions >= 1000;
-    const hasEngagement = reactions || comments || shares;
-    const sourceBadge = renderSourceBadge(post.source);
-    const media = Array.isArray(post.media) ? post.media : [];
-    const mediaCount = media.length;
-    const primaryImage = post.image_url
-      || (media.find(m => m.type === 'image') || {}).url
-      || (media.find(m => m.type !== 'video') || {}).thumbnail
-      || '';
-    const hasVideo = !!post.video_url || media.some(m => m.type === 'video');
-    const imageHtml = primaryImage
-      ? `<div class="post-image ${hasVideo ? 'has-video' : ''}">
-           <img src="${escapeHtml(proxyMediaUrl(primaryImage))}" alt="" loading="lazy" onerror="this.parentElement.remove()">
-           ${hasVideo ? '<span class="play-overlay" aria-hidden="true"></span>' : ''}
-           ${mediaCount > 1 ? `<span class="media-count-chip">+${mediaCount - 1}</span>` : ''}
-         </div>`
-      : '';
-    const typeIcon = postTypeIcon(post.post_type);
-    const hasComments = (post.comments_data || []).length > 0;
+  // طبقّ layout view (cards / list) من STATE
+  const layout = STATE.postsLayout || 'cards';
+  els.postsGrid.classList.toggle('layout-list', layout === 'list');
+  els.postsGrid.classList.toggle('layout-cards', layout !== 'list');
 
-    const typeBadge = postTypeBadge(post.post_type || 'text');
-
-    return `
-      <article class="post-card clickable" data-post-id="${escapeHtml(post.post_id)}" data-post-slug="${escapeHtml(post.page_slug)}" data-post-internal="${post.id || ''}" style="animation-delay: ${Math.min(i * 30, 600)}ms">
-        <div class="post-checkbox-wrap">
-          <input type="checkbox" class="post-select" data-post-id="${post.id || ''}">
-        </div>
-        <button class="btn-delete-post" title="حذف هذا المنشور" type="button">×</button>
-        <div class="post-header">
-          <div class="post-page">${escapeHtml(post.page_name)}</div>
-          <div class="post-time">${formatTime(post.timestamp_text, post.published_at || post.scraped_at)}</div>
-        </div>
-        <div class="post-meta-row">${typeBadge}${sourceBadge}</div>
-        ${imageHtml}
-        <div class="post-text">${escapeHtml(post.text || '')}</div>
-        ${mediaCount > 1 && !primaryImage ? `<div class="post-media-count">${mediaCount} ملف ميديا</div>` : ''}
-        <div class="post-engagement">
-          ${hasEngagement ? `
-            <div class="engagement-item ${isHigh ? 'high' : ''}" title="تفاعلات">
-              ❤ <strong>${formatNum(reactions)}</strong>
-            </div>
-            <div class="engagement-item ${hasComments ? 'has-detail' : ''}" title="تعليقات${hasComments ? ' (انقر للعرض)' : ''}">
-              💬 <strong>${formatNum(comments)}</strong>
-            </div>
-            <div class="engagement-item" title="مشاركات">
-              ↗ <strong>${formatNum(shares)}</strong>
-            </div>
-          ` : `
-            <div class="engagement-item no-data" title="هذا المصدر لا يوفر التفاعلات">
-              ⊘ بدون تفاعلات
-            </div>
-          `}
-          <span class="post-detail-hint">انقر للتفاصيل ↓</span>
-        </div>
-      </article>
-    `;
-  }).join('');
+  els.postsGrid.innerHTML = posts.slice(0, 100).map((post, i) =>
+    layout === 'list' ? renderPostListRow(post, i) : renderPostCard(post, i)
+  ).join('');
 
   // Click handlers
   document.querySelectorAll('.post-card.clickable').forEach(card => {
@@ -847,6 +839,117 @@ function renderPosts() {
       }
     });
   });
+}
+
+// ==================== Post Card / List rendering ====================
+
+function _postBaseData(post) {
+  const media = Array.isArray(post.media) ? post.media : [];
+  const images = media.filter(m => m.type === 'image' || (m.type !== 'video' && m.url));
+  const videos = media.filter(m => m.type === 'video');
+  const primaryImage = post.image_url
+    || (images[0] && images[0].url)
+    || (media[0] && media[0].thumbnail)
+    || '';
+  const hasVideo = !!post.video_url || videos.length > 0;
+  const mediaCount = images.length + videos.length;
+  return { media, images, videos, primaryImage, hasVideo, mediaCount };
+}
+
+function renderPostCard(post, i) {
+  const reactions = post.reactions || 0;
+  const comments = post.comments || 0;
+  const shares = post.shares || 0;
+  const isHigh = reactions >= 1000;
+  const hasEngagement = reactions || comments || shares;
+  const sourceBadge = renderSourceBadge(post.source);
+  const typeBadge = postTypeBadge(post.post_type || 'text');
+  const hasComments = (post.comments_data || []).length > 0;
+
+  const { primaryImage, hasVideo, mediaCount } = _postBaseData(post);
+
+  // كل البطاقات الآن لها media area بنفس الحجم لتوحيد المظهر
+  // (لو ما في صورة → placeholder رمادي مع أيقونة نوع المنشور)
+  const mediaArea = primaryImage
+    ? `<div class="post-image ${hasVideo ? 'has-video' : ''}">
+         <img src="${escapeHtml(proxyMediaUrl(primaryImage))}" alt="" loading="lazy"
+              onerror="this.parentElement.classList.add('img-broken')">
+         ${hasVideo ? '<span class="play-overlay" aria-hidden="true"></span>' : ''}
+         ${mediaCount > 1 ? `<span class="media-count-chip">+${mediaCount - 1}</span>` : ''}
+       </div>`
+    : `<div class="post-image post-image-placeholder">
+         <div class="placeholder-icon">${_typeIconBig(post.post_type)}</div>
+       </div>`;
+
+  return `
+    <article class="post-card clickable" data-post-id="${escapeHtml(post.post_id)}" data-post-slug="${escapeHtml(post.page_slug)}" data-post-internal="${post.id || ''}" style="animation-delay: ${Math.min(i * 30, 600)}ms">
+      <div class="post-checkbox-wrap">
+        <input type="checkbox" class="post-select" data-post-id="${post.id || ''}">
+      </div>
+      <button class="btn-delete-post" title="حذف هذا المنشور" type="button">×</button>
+      ${mediaArea}
+      <div class="post-card-body">
+        <div class="post-header">
+          <div class="post-page">${escapeHtml(post.page_name)}</div>
+          <div class="post-time">${formatTime(post.timestamp_text, post.published_at || post.scraped_at)}</div>
+        </div>
+        <div class="post-meta-row">${typeBadge}${sourceBadge}</div>
+        <div class="post-text">${escapeHtml(post.text || '')}</div>
+        <div class="post-engagement">
+          ${hasEngagement ? `
+            <div class="engagement-item ${isHigh ? 'high' : ''}" title="تفاعلات">❤ <strong>${formatNum(reactions)}</strong></div>
+            <div class="engagement-item ${hasComments ? 'has-detail' : ''}" title="تعليقات">💬 <strong>${formatNum(comments)}</strong></div>
+            <div class="engagement-item" title="مشاركات">↗ <strong>${formatNum(shares)}</strong></div>
+          ` : `<div class="engagement-item no-data">⊘ بدون تفاعلات</div>`}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderPostListRow(post, i) {
+  const reactions = post.reactions || 0;
+  const comments = post.comments || 0;
+  const shares = post.shares || 0;
+  const sourceBadge = renderSourceBadge(post.source);
+  const typeBadge = postTypeBadge(post.post_type || 'text');
+
+  const { primaryImage, hasVideo, mediaCount } = _postBaseData(post);
+  const thumb = primaryImage
+    ? `<div class="list-thumb ${hasVideo ? 'has-video' : ''}">
+         <img src="${escapeHtml(proxyMediaUrl(primaryImage))}" alt="" loading="lazy"
+              onerror="this.parentElement.classList.add('img-broken')">
+         ${hasVideo ? '<span class="play-overlay-sm"></span>' : ''}
+         ${mediaCount > 1 ? `<span class="media-count-chip">+${mediaCount - 1}</span>` : ''}
+       </div>`
+    : `<div class="list-thumb placeholder">${_typeIconBig(post.post_type)}</div>`;
+
+  return `
+    <article class="post-list-row clickable" data-post-id="${escapeHtml(post.post_id)}" data-post-slug="${escapeHtml(post.page_slug)}" data-post-internal="${post.id || ''}">
+      <input type="checkbox" class="post-select list-cb" data-post-id="${post.id || ''}" onclick="event.stopPropagation()">
+      ${thumb}
+      <div class="list-content">
+        <div class="list-head">
+          <strong class="list-page">${escapeHtml(post.page_name)}</strong>
+          <span class="list-time">${formatTime(post.timestamp_text, post.published_at || post.scraped_at)}</span>
+          ${typeBadge}
+          ${sourceBadge}
+        </div>
+        <div class="list-text">${escapeHtml((post.text || '').slice(0, 220))}${(post.text || '').length > 220 ? '…' : ''}</div>
+        <div class="list-engagement">
+          <span title="تفاعلات">❤ ${formatNum(reactions)}</span>
+          <span title="تعليقات">💬 ${formatNum(comments)}</span>
+          <span title="مشاركات">↗ ${formatNum(shares)}</span>
+        </div>
+      </div>
+      <button class="btn-icon-sm btn-delete-post list-delete" title="حذف" type="button" onclick="event.stopPropagation()">×</button>
+    </article>
+  `;
+}
+
+function _typeIconBig(type) {
+  const icons = { video: '🎥', photo: '🖼', link: '🔗', live: '🔴', event: '📅', text: '📝' };
+  return icons[type] || '📝';
 }
 
 function postTypeIcon(type) {
@@ -4834,15 +4937,40 @@ function setupListeners() {
   els.dateFrom.addEventListener('change', applyFilters);
   els.dateTo.addEventListener('change', applyFilters);
   els.minReactions.addEventListener('input', debounce(applyFilters, 300));
+  els.maxReactions?.addEventListener('input', debounce(applyFilters, 300));
   els.minComments.addEventListener('input', debounce(applyFilters, 300));
-  els.hasImageOnly.addEventListener('change', applyFilters);
-  els.highEngagementOnly.addEventListener('change', applyFilters);
+  els.postTypeFilter?.addEventListener('change', applyFilters);
+  els.hasImageOnly?.addEventListener('change', applyFilters);
+  els.hasVideoOnly?.addEventListener('change', applyFilters);
+  els.textOnly?.addEventListener('change', applyFilters);
+  els.highEngagementOnly?.addEventListener('change', applyFilters);
+  els.lowEngagementOnly?.addEventListener('change', applyFilters);
+  els.hasCommentsOnly?.addEventListener('change', applyFilters);
   els.resetFilters.addEventListener('click', resetAllFilters);
 
   // Quick range buttons
   document.querySelectorAll('.btn-quick-range').forEach(btn => {
     btn.addEventListener('click', () => applyQuickRange(btn.dataset.range));
   });
+
+  // View layout toggle (cards / list)
+  document.querySelectorAll('.layout-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const layout = btn.dataset.layout;
+      STATE.postsLayout = layout;
+      try { localStorage.setItem('marsad_layout', layout); } catch {}
+      document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b === btn));
+      renderPosts();
+    });
+  });
+  // Restore last layout
+  try {
+    const saved = localStorage.getItem('marsad_layout');
+    if (saved === 'list') {
+      STATE.postsLayout = 'list';
+      document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === 'list'));
+    }
+  } catch {}
 
   // Actions
   els.exportBtn.addEventListener('click', exportCSV);
