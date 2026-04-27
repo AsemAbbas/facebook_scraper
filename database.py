@@ -599,8 +599,71 @@ def get_page(user_id: int, slug: str) -> Optional[dict]:
         return r
 
 
+_SLUG_FALLBACK_COUNTER = [0]
+
+
+def _server_slugify(name: str, url: str = "") -> str:
+    """
+    نسخة server-side من slugify - يدعم نفس الـ heuristic:
+    1) ASCII من الاسم
+    2) آخر segment من الـ URL (آخر شيء بعد /)
+    3) hostname
+    4) counter fallback
+    """
+    import re as _re
+    # 1) ASCII من الاسم
+    cleaned = _re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_")[:40]
+    if cleaned and len(cleaned) >= 3:
+        return cleaned
+
+    # 2 + 3) من الـ URL
+    if url:
+        try:
+            from urllib.parse import urlparse
+            u = urlparse(url)
+            path = (u.path or "").strip("/")
+            last = path.split("/")[-1] if path else ""
+            from_url = _re.sub(r"[^a-z0-9]+", "_", last.lower()).strip("_")[:40]
+            if from_url and len(from_url) >= 2:
+                return from_url
+            host = _re.sub(r"[^a-z0-9]+", "_", (u.hostname or "").lower()).strip("_")[:40]
+            if host:
+                return host
+        except Exception:
+            pass
+
+    # 4) counter
+    _SLUG_FALLBACK_COUNTER[0] += 1
+    return f"page_{_SLUG_FALLBACK_COUNTER[0]}_{secrets.token_hex(3)}"
+
+
 def upsert_pages(user_id: int, pages: list[dict]) -> None:
-    """استبدال كل صفحات المستخدم بالقائمة الجديدة"""
+    """
+    استبدال كل صفحات المستخدم بالقائمة الجديدة.
+
+    دفاع: لو الـ frontend أرسل صفحات بـ slug مكرّر (بعض الباقات يحدث ذلك مع
+    أسماء عربية تنتج نفس الـ slug)، نولّد slug فريد server-side قبل الـ
+    upsert. هذا منع فقدان صفوف بسبب UNIQUE KEY collision على
+    (user_id, slug).
+    """
+    # 1) deduplicate slugs قبل DELETE/INSERT
+    used_slugs: set = set()
+    for p in pages:
+        slug = (p.get("slug") or "").strip()
+        # fallback: من URL ثم name ثم counter
+        if not slug:
+            url = (p.get("url") or "").strip()
+            name = (p.get("name") or "").strip()
+            slug = _server_slugify(name, url)
+        # تأكد من uniqueness عبر الـ batch
+        base = slug
+        n = 2
+        while slug in used_slugs:
+            slug = f"{base}_{n}"
+            n += 1
+        used_slugs.add(slug)
+        p["slug"] = slug
+
     now = datetime.now(timezone.utc)
     with db_cursor() as cur:
         incoming_slugs = [p.get("slug") for p in pages if p.get("slug")]

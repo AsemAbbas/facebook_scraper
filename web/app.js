@@ -1026,12 +1026,48 @@ function formatRelTime(iso) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-function slugify(text) {
-  return String(text || '')
+function slugify(text, urlHint) {
+  // 1) جرّب نولد slug من النص (للأسماء الإنجليزية يطلع جيد)
+  const fromText = String(text || '')
     .trim().toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_|_$/g, '')
-    .slice(0, 40) || `page_${Date.now()}`;
+    .slice(0, 40);
+  if (fromText && fromText.length >= 3) return fromText;
+
+  // 2) للأسماء العربية أو الفارغة: نستخرج slug من الـ URL (آخر segment غالباً ASCII)
+  if (urlHint) {
+    try {
+      const u = new URL(urlHint);
+      const path = (u.pathname || '').replace(/^\/+|\/+$/g, '');
+      const lastSeg = path.split('/').pop() || u.hostname || '';
+      const fromUrl = lastSeg.toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 40);
+      if (fromUrl && fromUrl.length >= 2) return fromUrl;
+      // fallback: hostname
+      const hostSlug = (u.hostname || '').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40);
+      if (hostSlug) return hostSlug;
+    } catch {}
+  }
+
+  // 3) fallback مع counter بدل timestamp (ثابت + sequential)
+  STATE._slugCounter = (STATE._slugCounter || 0) + 1;
+  return `page_${STATE._slugCounter}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// يضمن slug فريد داخل قائمة - لو في تكرار يضيف _2, _3 إلخ
+function ensureUniqueSlug(slug, existingSlugs) {
+  if (!existingSlugs.has(slug)) {
+    existingSlugs.add(slug);
+    return slug;
+  }
+  let n = 2;
+  while (existingSlugs.has(`${slug}_${n}`)) n++;
+  const unique = `${slug}_${n}`;
+  existingSlugs.add(unique);
+  return unique;
 }
 
 function showToast(msg, type = '') {
@@ -1750,22 +1786,42 @@ function bindPagesManagerEvents() {
           showToast('لم يتم العثور على صفحات في الملف', 'error');
           return;
         }
-        // Merge by slug — overwrites existing, adds new
-        const existing = new Map(STATE.pagesConfig.map(p => [p.slug || slugify(p.name), p]));
-        let added = 0, updated = 0;
+        // Merge by slug — overwrites existing, adds new.
+        // نضمن uniqueness عبر الموجود + المُستورد لأن الأسماء العربية
+        // قد تنتج نفس الـ slug من الـ URL.
+        const usedSlugs = new Set(
+          STATE.pagesConfig.map(p => p.slug || slugify(p.name, p.url)).filter(Boolean)
+        );
+        const existing = new Map();
+        STATE.pagesConfig.forEach(p => {
+          const k = p.slug || slugify(p.name, p.url);
+          if (k) existing.set(k, p);
+        });
+
+        let added = 0, updated = 0, skipped = 0;
         for (const p of pages) {
-          const slug = p.slug || slugify(p.name);
-          if (!slug || !p.url) continue;
+          if (!p.url) { skipped++; continue; }
+
+          // أعد توليد slug من الاسم + URL لو ما حدد المستخدم slug
+          let slug = (p.slug || '').trim();
+          if (!slug) slug = slugify(p.name, p.url);
+
           if (existing.has(slug)) {
-            Object.assign(existing.get(slug), p);
+            // نفس الـ slug موجود → تحديث (overwrite)
+            Object.assign(existing.get(slug), p, { slug });
             updated++;
-          } else {
-            STATE.pagesConfig.push({ ...p, slug });
-            added++;
+            continue;
           }
+          // slug جديد - تأكد إنه فريد عبر الـ batch بأكمله
+          slug = ensureUniqueSlug(slug, usedSlugs);
+          const newPage = { ...p, slug };
+          STATE.pagesConfig.push(newPage);
+          existing.set(slug, newPage);
+          added++;
         }
         openPagesModal();
-        showToast(`✅ تم الاستيراد: ${added} جديدة، ${updated} محدّثة`, 'success');
+        const skipMsg = skipped > 0 ? `، ${skipped} تم تخطيها (بدون رابط)` : '';
+        showToast(`✅ تم الاستيراد: ${added} جديدة، ${updated} محدّثة${skipMsg}`, 'success');
       } catch (err) {
         showToast('خطأ في القراءة: ' + err.message, 'error');
       }
@@ -1902,14 +1958,16 @@ async function testPage(url, source, row) {
 }
 
 function syncPagesFromUI() {
-  document.querySelectorAll('.page-row').forEach(row => {
+  // first pass: read all values
+  const rows = Array.from(document.querySelectorAll('.page-row'));
+  rows.forEach(row => {
     const index = parseInt(row.dataset.index);
     const page = STATE.pagesConfig[index];
     if (!page) return;
     page.name = row.querySelector('.page-name').value.trim();
     page.url = row.querySelector('.page-url').value.trim();
     let slug = row.querySelector('.page-slug').value.trim();
-    if (!slug) slug = slugify(page.name);
+    if (!slug) slug = slugify(page.name, page.url);
     page.slug = slug;
     page.max_posts = parseInt(row.querySelector('.page-max-posts').value) || 30;
     page.source = row.querySelector('.page-source').value;
@@ -1919,6 +1977,18 @@ function syncPagesFromUI() {
     // Date fields removed from this section — schedule has its own date range
     delete page.date_from;
     delete page.date_to;
+  });
+
+  // second pass: ensure slug uniqueness across the whole list (defense
+  // against duplicate slugs that would silently get DELETEd by upsert_pages).
+  const usedSlugs = new Set();
+  STATE.pagesConfig.forEach(p => {
+    if (!p.slug) p.slug = slugify(p.name, p.url);
+    if (usedSlugs.has(p.slug)) {
+      p.slug = ensureUniqueSlug(p.slug, usedSlugs);
+    } else {
+      usedSlugs.add(p.slug);
+    }
   });
 }
 
@@ -2029,7 +2099,7 @@ function csvToPages(text) {
     pages.push({
       name: name || '(بدون اسم)',
       url,
-      slug: get('slug') || slugify(name || url),
+      slug: get('slug') || slugify(name, url),
       city: get('city'),
       followers: parseInt(followersRaw) || 0,
       max_posts: parseInt(maxPostsRaw) || 30,
@@ -2734,7 +2804,7 @@ function bindWizardEvents() {
       addBtn.disabled = true;
       addBtn.textContent = '⏳ جاري الحفظ…';
       const newPage = {
-        slug: slugify(name),
+        slug: slugify(name, url),
         name, url,
         max_posts: 15,
         source: 'auto',
