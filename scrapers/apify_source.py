@@ -408,29 +408,38 @@ class ApifySource(BaseScraper):
                               duration=m.get("duration"))
 
             # ==== Subattachments (ألبومات الصور — N صور في منشور واحد) ====
-            for sub_key in ("subattachments", "sub_attachments", "all_subattachments"):
+            # curious_coder الجديد يحطها كـ "images" مباشرة على الـ attachment
+            # FB GraphQL القديم يحطها كـ "subattachments.nodes"
+            for sub_key in ("subattachments", "sub_attachments", "all_subattachments",
+                            "images", "photos", "media_items"):
                 subs = m.get(sub_key)
                 if isinstance(subs, dict):
-                    # FB GraphQL: {nodes: [...]}
                     nodes = subs.get("nodes") or subs.get("edges") or []
                     if isinstance(nodes, list):
                         for sub in nodes:
                             _extract_from_dict(sub, depth + 1)
                 elif isinstance(subs, list):
                     for sub in subs:
-                        _extract_from_dict(sub, depth + 1)
+                        if isinstance(sub, str) and sub.startswith(("http", "//")):
+                            if "facebook.com/photo" in sub.lower() or "facebook.com/video" in sub.lower():
+                                continue
+                            _add_media(sub, t_hint or "image")
+                        elif isinstance(sub, dict):
+                            _extract_from_dict(sub, depth + 1)
 
             # ==== thumbnail as standalone (fallback لو ما لقينا شي) ====
             thumb = m.get("thumbnail") or m.get("thumbnailUrl")
             if isinstance(thumb, str) and not media_items:
                 _add_media(thumb, t_hint or "image")
 
-        # ==== استخرج من جميع الـ array fields المحتملة ====
+        # ==== استخرج من جميع الـ array fields المحتملة على مستوى الـ post ====
+        # curious_coder simple/raw output: all_photos = [{caption, url}, ...]
+        # على مستوى الـ post نفسه (مش داخل attachments).
         for key in ("attachments", "media", "photos", "videos", "images", "mediaItems",
-                   "all_subattachments", "scrapedPhotos", "photo_image_uri_list"):
+                   "all_photos", "all_videos", "all_subattachments",
+                   "scrapedPhotos", "photo_image_uri_list"):
             raw = item.get(key)
             if isinstance(raw, dict):
-                # FB GraphQL يحطها في {nodes/edges: [...]}
                 inner = raw.get("nodes") or raw.get("edges") or raw.get("data")
                 if isinstance(inner, list):
                     raw = inner
