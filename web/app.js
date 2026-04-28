@@ -57,10 +57,7 @@ const els = {
   refreshBtn: document.getElementById('refreshBtn'),
   triggerBtn: document.getElementById('triggerBtn'),
   exportBtn: document.getElementById('exportBtn'),
-  historyBtn: document.getElementById('historyBtn'),
-  managePagesBtn: document.getElementById('managePagesBtn'),
-  analyticsBtn: document.getElementById('analyticsBtn'),
-  settingsBtn: document.getElementById('settingsBtn'),
+  // (historyBtn / settingsBtn / managePagesBtn / analyticsBtn moved to user menu)
   lastUpdateText: document.getElementById('lastUpdateText'),
   // live banner
   liveStatusBanner: document.getElementById('liveStatusBanner'),
@@ -1225,13 +1222,15 @@ function _lightboxRender() {
 
 function _renderPagination(total, page, perPage) {
   let bar = document.getElementById('postsPagination');
+  const grid = els.postsGrid;
   if (!bar) {
     bar = document.createElement('div');
     bar.id = 'postsPagination';
     bar.className = 'pagination-bar';
-    // أدخله بعد الـ posts-grid
-    const grid = els.postsGrid;
-    if (grid && grid.parentNode) grid.parentNode.insertBefore(bar, grid.nextSibling);
+    if (grid && grid.parentNode) grid.parentNode.insertBefore(bar, grid);
+  } else if (grid && bar.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_PRECEDING) {
+    // bar is currently AFTER grid — move it before
+    grid.parentNode.insertBefore(bar, grid);
   }
   if (total === 0) { bar.innerHTML = ''; return; }
 
@@ -5703,10 +5702,7 @@ function setupListeners() {
   });
 
   els.triggerBtn.addEventListener('click', openTriggerModal);
-  if (els.managePagesBtn) els.managePagesBtn.addEventListener('click', openPagesModal);
-  els.historyBtn.addEventListener('click', openHistoryModal);
-  if (els.analyticsBtn) els.analyticsBtn.addEventListener('click', openAnalyticsModal);
-  if (els.settingsBtn) els.settingsBtn.addEventListener('click', openSettingsModal);
+  // History/Settings/Pages/Media now live in the user dropdown — bound below.
 
   // User menu
   const userBtn = document.getElementById('userBtn');
@@ -5757,6 +5753,17 @@ function setupListeners() {
   const menuMediaLibrary = document.getElementById('menuMediaLibrary');
   if (menuMediaLibrary) {
     menuMediaLibrary.addEventListener('click', () => openMediaLibrary());
+  }
+
+  // History + Settings now live in the user menu (moved out of header)
+  const menuHistory = document.getElementById('menuHistory');
+  if (menuHistory) {
+    menuHistory.addEventListener('click', () => openHistoryModal());
+  }
+
+  const menuSettings = document.getElementById('menuSettings');
+  if (menuSettings) {
+    menuSettings.addEventListener('click', () => openSettingsModal());
   }
 
   // Modal — يُغلق فقط بزر × أو Escape، النقر خارجه لا يغلقه
