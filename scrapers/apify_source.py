@@ -103,15 +103,19 @@ class ApifySource(BaseScraper):
         # 3. اسحب النتائج
         items = await self._fetch_results(dataset_id)
 
+        # حافظ على raw item داخل post.raw عشان view-raw يعرض الأصل (debug)
         # 4. حوّل لـ UnifiedPost + فلترة التاريخ
         posts: list[UnifiedPost] = []
         for item in items[:max_posts * 2]:  # اسحب ضعف العدد لأن فيه فلترة
             post = self._normalize_item(item, page_slug, page_name, page_url)
             if post and post.is_valid():
+                # احفظ raw للـ debug
+                post.raw = item if isinstance(item, dict) else {}
                 if self.post_in_date_range(post, date_from, date_to):
                     posts.append(post)
                     preview = post.text[:50].replace("\n", " ")
-                    print(f"    ✓ #{len(posts)}: {preview}")
+                    media_n = len(post.media)
+                    print(f"    ✓ #{len(posts)}: {preview}  ({media_n} media)")
                     if len(posts) >= max_posts:
                         break
 
@@ -133,12 +137,16 @@ class ApifySource(BaseScraper):
         # Required: urls (array of strings)
         # Optional: count, outputFormat, sortType, scrapePhotos, cookie,
         #           minDelay (>=1), maxDelay (>=10), scrapeUntil, proxy
+        #
+        # outputFormat=raw يرجع البيانات الكاملة (attachments مع subattachments
+        # nested) عشان نقدر نستخرج كل الصور. الـ "simple" يحذف الـ attachments
+        # تماماً للمنشورات الصورية فيخلّيها تظهر كنص بدون ميديا.
         input_data = {
-            "urls": [page_url],           # array of strings (ليس startUrls)
-            "count": max_posts,           # ليس resultsLimit
-            "outputFormat": "simple",     # flat structure - أسهل للمعالجة
-            "sortType": "new_posts",      # الأحدث أولاً
-            "scrapePhotos": False,        # يزيد التكلفة وعدنا ميديا من attachments
+            "urls": [page_url],
+            "count": max_posts,
+            "outputFormat": "raw",        # raw = بيانات كاملة (مهم لاستخراج الصور)
+            "sortType": "new_posts",
+            "scrapePhotos": True,         # يستعمل FB photo viewer لجلب صور full-res
         }
 
         # override اختياري من config (الحدود الدنيا للـ actor: 1 و 10 ثواني)
@@ -311,62 +319,129 @@ class ApifySource(BaseScraper):
                 "duration_seconds": int(duration or 0),
             })
 
-        def _extract_from_dict(m: dict):
-            """حاول تستخرج url/type من dict بأكثر شكل ممكن"""
-            if not isinstance(m, dict):
+        def _extract_from_dict(m: dict, depth: int = 0):
+            """
+            تستخرج URL/type من أي dict بأي شكل:
+              - curious_coder simple: {type, url, media, thumbnail}
+              - FB raw nested: {media: {image: {uri}, photo_image: {uri}, ...}}
+              - subattachments (ألبومات الصور)
+              - playable_url للفيديو
+            """
+            if not isinstance(m, dict) or depth > 4:   # تجنّب recursion مفرطة
                 return
-            # nested photo_image: {uri: "..."}
+
+            # ==== شكل FB raw GraphQL ====
+            # m = { media: { image: {uri}, photo_image: {uri}, playable_url, ... } }
+            inner = m.get("media")
+            if isinstance(inner, dict):
+                # image inside media
+                img = inner.get("image") or inner.get("photo_image") or inner.get("largeImage")
+                if isinstance(img, dict) and img.get("uri"):
+                    _add_media(img["uri"], "image",
+                              width=img.get("width"), height=img.get("height"))
+                elif isinstance(img, str):
+                    _add_media(img, "image")
+                # video inside media
+                vid_url = inner.get("playable_url") or inner.get("playable_url_quality_hd") or inner.get("browser_native_hd_url") or inner.get("browser_native_sd_url")
+                if isinstance(vid_url, str):
+                    poster = ""
+                    if isinstance(img, dict):
+                        poster = img.get("uri", "")
+                    elif isinstance(img, str):
+                        poster = img
+                    _add_media(vid_url, "video", thumbnail=poster)
+
+            # nested photo_image directly on item
             pi = m.get("photo_image")
             if isinstance(pi, dict):
                 _add_media(pi.get("uri") or "", "image",
                           thumbnail=pi.get("uri") or "",
                           width=pi.get("width"), height=pi.get("height"))
+            elif isinstance(pi, str):
+                _add_media(pi, "image")
+
+            # nested image directly on item
+            img2 = m.get("image")
+            if isinstance(img2, dict):
+                _add_media(img2.get("uri") or img2.get("url") or "", "image",
+                          width=img2.get("width"), height=img2.get("height"))
+            elif isinstance(img2, str) and img2.startswith(("http", "//")):
+                _add_media(img2, "image")
+
             # video nested
             vid = m.get("video") or m.get("video_url") or m.get("playable_url")
             if isinstance(vid, dict):
-                _add_media(vid.get("url") or vid.get("src") or "", "video",
+                _add_media(vid.get("url") or vid.get("src") or vid.get("uri") or "", "video",
                           thumbnail=m.get("thumbnail") or "",
                           duration=vid.get("duration") or m.get("duration"))
             elif isinstance(vid, str):
                 _add_media(vid, "video", thumbnail=m.get("thumbnail") or "")
 
-            # Generic url fields
-            explicit_type = (m.get("type") or m.get("mediaType") or "").lower()
+            # ==== Generic url fields ====
+            explicit_type = (m.get("type") or m.get("__typename") or m.get("mediaType") or "").lower()
             t_hint = ""
-            if any(k in explicit_type for k in ("video", "clip")):
+            if any(k in explicit_type for k in ("video", "clip", "reel")):
                 t_hint = "video"
-            elif any(k in explicit_type for k in ("photo", "image", "gif")):
+            elif any(k in explicit_type for k in ("photo", "image", "gif", "album")):
                 t_hint = "image"
             elif any(k in explicit_type for k in ("link", "external")):
                 t_hint = "external_link"
 
-            for key in ("url", "src", "image", "media", "uri", "large_image", "largeImage",
-                       "source_url", "sourceUrl", "original_url", "originalUrl"):
+            for key in ("url", "src", "uri", "large_image", "largeImage",
+                       "source_url", "sourceUrl", "original_url", "originalUrl",
+                       "image_url", "imageUrl", "thumbnailUrl"):
                 val = m.get(key)
                 if isinstance(val, dict):
-                    # nested — recurse shallowly
                     url2 = val.get("url") or val.get("src") or val.get("uri") or ""
                     if url2:
                         _add_media(url2, t_hint,
-                                  thumbnail=val.get("thumbnail") or val.get("thumbnailUrl") or "",
+                                  thumbnail=val.get("thumbnail") or "",
                                   width=val.get("width"), height=val.get("height"))
                 elif isinstance(val, str) and val.startswith(("http", "//")):
+                    # photo viewer URLs (facebook.com/photo/?fbid=...) - مش ميديا مباشرة، نتجاهلها
+                    # لأن fbcdn URLs الحقيقية هي ما نريد
+                    if "facebook.com/photo" in val.lower() or "facebook.com/video" in val.lower() or "facebook.com/reel" in val.lower():
+                        continue
                     _add_media(val, t_hint,
-                              thumbnail=m.get("thumbnail") or m.get("thumbnailUrl") or "",
+                              thumbnail=m.get("thumbnail") or "",
                               width=m.get("width"), height=m.get("height"),
-                              duration=m.get("duration") or m.get("durationSeconds"))
-            # thumbnail as standalone
+                              duration=m.get("duration"))
+
+            # ==== Subattachments (ألبومات الصور — N صور في منشور واحد) ====
+            for sub_key in ("subattachments", "sub_attachments", "all_subattachments"):
+                subs = m.get(sub_key)
+                if isinstance(subs, dict):
+                    # FB GraphQL: {nodes: [...]}
+                    nodes = subs.get("nodes") or subs.get("edges") or []
+                    if isinstance(nodes, list):
+                        for sub in nodes:
+                            _extract_from_dict(sub, depth + 1)
+                elif isinstance(subs, list):
+                    for sub in subs:
+                        _extract_from_dict(sub, depth + 1)
+
+            # ==== thumbnail as standalone (fallback لو ما لقينا شي) ====
             thumb = m.get("thumbnail") or m.get("thumbnailUrl")
             if isinstance(thumb, str) and not media_items:
                 _add_media(thumb, t_hint or "image")
 
-        # attachments / media / photos / videos arrays
-        for key in ("attachments", "media", "photos", "videos", "images", "mediaItems"):
+        # ==== استخرج من جميع الـ array fields المحتملة ====
+        for key in ("attachments", "media", "photos", "videos", "images", "mediaItems",
+                   "all_subattachments", "scrapedPhotos", "photo_image_uri_list"):
             raw = item.get(key)
+            if isinstance(raw, dict):
+                # FB GraphQL يحطها في {nodes/edges: [...]}
+                inner = raw.get("nodes") or raw.get("edges") or raw.get("data")
+                if isinstance(inner, list):
+                    raw = inner
+                else:
+                    raw = [raw]
             if not isinstance(raw, list):
                 continue
             for m in raw:
-                if isinstance(m, str):
+                if isinstance(m, str) and m.startswith(("http", "//")):
+                    if "facebook.com/photo" in m.lower() or "facebook.com/video" in m.lower():
+                        continue
                     _add_media(m)
                 elif isinstance(m, dict):
                     _extract_from_dict(m)

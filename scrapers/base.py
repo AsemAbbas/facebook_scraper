@@ -89,9 +89,15 @@ class UnifiedPost:
     raw: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        """تحويل لـ dict نظيف للتخزين JSON"""
+        """
+        تحويل لـ dict نظيف للتخزين JSON.
+        نحتفظ بـ raw تحت اسم _source_raw (لو dict serializable) عشان
+        المستخدم يقدر يفحص الاستجابة الأصلية من المصدر عبر زر debug.
+        """
         d = asdict(self)
-        d.pop("raw", None)
+        raw = d.pop("raw", None)
+        if isinstance(raw, dict) and raw:
+            d["_source_raw"] = raw
         return d
 
     def is_valid(self) -> bool:
