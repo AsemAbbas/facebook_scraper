@@ -773,6 +773,14 @@ def api_history():
     return jsonify({"runs": runs})
 
 
+@app.route("/api/history", methods=["DELETE"])
+@login_required
+def api_history_clear():
+    """يمسح كل سجل العمليات للمستخدم الحالي"""
+    n = db.delete_jobs_all(current_user.id)
+    return jsonify({"ok": True, "deleted": n})
+
+
 # ======================================================================
 #  API: Test single URL
 # ======================================================================

@@ -303,6 +303,8 @@ SCHEMA_STATEMENTS = [
         pages_json      TEXT,
         source          VARCHAR(32) DEFAULT 'auto',
         interval_minutes INT NOT NULL,
+        run_at_time     VARCHAR(8) NULL,       -- "HH:MM" — للـ daily/weekly
+        run_at_dow      TINYINT NULL,          -- 0-6 — للـ weekly فقط (0=الأحد)
         date_range_preset VARCHAR(20) DEFAULT 'last_24h',
         custom_hours_back INT DEFAULT 24,
         last_run        DATETIME NULL,
@@ -372,6 +374,12 @@ def init_db() -> None:
     except Exception as e:
         print(f"[db] sources migration skipped: {e}")
 
+    # Migration: schedules - run_at_time + run_at_dow
+    try:
+        _migrate_schedules_add_time_dow()
+    except Exception as e:
+        print(f"[db] schedules migration skipped: {e}")
+
 
 def _migrate_simplify_sources() -> None:
     """
@@ -421,6 +429,23 @@ def _migrate_pages_add_city_followers() -> None:
         if "followers" not in existing:
             cur.execute("ALTER TABLE pages ADD COLUMN followers INT DEFAULT 0 AFTER city")
             print("[db] added pages.followers column")
+
+
+def _migrate_schedules_add_time_dow() -> None:
+    """يضيف عمودي run_at_time و run_at_dow لجدول schedules"""
+    with db_cursor() as cur:
+        cur.execute("""
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'schedules'
+        """)
+        existing = {(r["COLUMN_NAME"] if isinstance(r, dict) else r[0]).lower()
+                    for r in (cur.fetchall() or [])}
+        if "run_at_time" not in existing:
+            cur.execute("ALTER TABLE schedules ADD COLUMN run_at_time VARCHAR(8) NULL AFTER interval_minutes")
+            print("[db] added schedules.run_at_time column")
+        if "run_at_dow" not in existing:
+            cur.execute("ALTER TABLE schedules ADD COLUMN run_at_dow TINYINT NULL AFTER run_at_time")
+            print("[db] added schedules.run_at_dow column")
 
 
 def _force_apify_actor_lock() -> None:
@@ -1175,6 +1200,13 @@ def list_jobs(user_id: int, limit: int = 50) -> list[dict]:
         return [_inflate_job(r) for r in cur.fetchall()]
 
 
+def delete_jobs_all(user_id: int) -> int:
+    """يمسح كل jobs لمستخدم - يرجع العدد المحذوف"""
+    with db_cursor() as cur:
+        cur.execute("DELETE FROM jobs WHERE user_id=%s", (user_id,))
+        return cur.rowcount
+
+
 def _inflate_job(row: dict) -> dict:
     if not row:
         return row
@@ -1328,11 +1360,58 @@ DATE_RANGE_PRESETS = {
 }
 
 
-def _calc_next_run(interval_minutes: int, from_dt: Optional[datetime] = None) -> datetime:
-    """يحسب next_run بناءً على الفاصل"""
+def _calc_next_run(
+    interval_minutes: int,
+    from_dt: Optional[datetime] = None,
+    run_at_time: Optional[str] = None,    # "HH:MM"
+    run_at_dow: Optional[int] = None,     # 0-6 (0=الأحد)
+) -> datetime:
+    """
+    يحسب next_run.
+      - 1440 (يومي) + run_at_time   → غدًا في تلك الساعة (أو اليوم إن لسا ما مرّت)
+      - 10080 (أسبوعي) + run_at_dow + run_at_time → اليوم القادم المطابق + تلك الساعة
+      - غير ذلك → الآن + interval_minutes (السلوك السابق)
+    """
     from datetime import timedelta
     base = from_dt or datetime.now(timezone.utc)
+
+    # Daily with specific time
+    if interval_minutes == 1440 and run_at_time:
+        h, m = _parse_hh_mm(run_at_time)
+        target = base.replace(hour=h, minute=m, second=0, microsecond=0)
+        if target <= base:
+            target = target + timedelta(days=1)
+        return target
+
+    # Weekly with specific day + time
+    if interval_minutes == 10080 and run_at_time is not None and run_at_dow is not None:
+        h, m = _parse_hh_mm(run_at_time)
+        # Python's weekday(): Mon=0..Sun=6 ; نحن: Sun=0..Sat=6
+        # نحول من نظام "Sun=0" إلى "Mon=0"
+        target_py_weekday = (run_at_dow - 1) % 7    # 0(Sun)→6(Sun in py), 1(Mon)→0, ...
+        days_ahead = (target_py_weekday - base.weekday()) % 7
+        if days_ahead == 0:
+            # نفس اليوم - تحقق إذا الوقت لسا ما مرّ
+            target = base.replace(hour=h, minute=m, second=0, microsecond=0)
+            if target <= base:
+                days_ahead = 7
+                target = target + timedelta(days=7)
+            return target
+        target = base + timedelta(days=days_ahead)
+        return target.replace(hour=h, minute=m, second=0, microsecond=0)
+
+    # Default
     return base + timedelta(minutes=interval_minutes)
+
+
+def _parse_hh_mm(s: str) -> tuple[int, int]:
+    try:
+        parts = (s or "").split(":")
+        h = max(0, min(23, int(parts[0])))
+        m = max(0, min(59, int(parts[1]) if len(parts) > 1 else 0))
+        return h, m
+    except Exception:
+        return 8, 0
 
 
 def list_schedules(user_id: int) -> list[dict]:
@@ -1379,14 +1458,20 @@ def create_schedule(user_id: int, data: dict) -> int:
     now = datetime.now(timezone.utc)
     pages = data.get("pages") or []
     interval_minutes = int(data.get("interval_minutes") or 60)
-    next_run = _calc_next_run(interval_minutes, now)
+    run_at_time = data.get("run_at_time") or None
+    run_at_dow = data.get("run_at_dow")
+    if run_at_dow is not None:
+        try: run_at_dow = int(run_at_dow)
+        except: run_at_dow = None
+    next_run = _calc_next_run(interval_minutes, now, run_at_time, run_at_dow)
 
     with db_cursor() as cur:
         cur.execute("""
             INSERT INTO schedules
             (user_id, name, enabled, pages_json, source, interval_minutes,
+             run_at_time, run_at_dow,
              date_range_preset, custom_hours_back, next_run, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             user_id,
             (data.get("name") or "مهمة جديدة").strip()[:128],
@@ -1394,6 +1479,8 @@ def create_schedule(user_id: int, data: dict) -> int:
             json.dumps(pages, ensure_ascii=False),
             data.get("source") or "auto",
             interval_minutes,
+            run_at_time,
+            run_at_dow,
             data.get("date_range_preset") or "last_24h",
             int(data.get("custom_hours_back") or 24),
             next_run,
@@ -1415,13 +1502,28 @@ def update_schedule(user_id: int, schedule_id: int, data: dict) -> bool:
         fields["pages_json"] = json.dumps(data["pages"] or [], ensure_ascii=False)
     if "source" in data:
         fields["source"] = data["source"] or "auto"
+    if "run_at_time" in data:
+        fields["run_at_time"] = data["run_at_time"] or None
+    if "run_at_dow" in data:
+        try:
+            fields["run_at_dow"] = int(data["run_at_dow"]) if data["run_at_dow"] is not None else None
+        except (TypeError, ValueError):
+            fields["run_at_dow"] = None
     if "interval_minutes" in data:
         fields["interval_minutes"] = int(data["interval_minutes"])
-        fields["next_run"] = _calc_next_run(fields["interval_minutes"], now)
     if "date_range_preset" in data:
         fields["date_range_preset"] = data["date_range_preset"]
     if "custom_hours_back" in data:
         fields["custom_hours_back"] = int(data["custom_hours_back"])
+
+    # أعد حساب next_run لو تغيّر أي شيء يؤثر عليه
+    if any(k in data for k in ("interval_minutes", "run_at_time", "run_at_dow")):
+        # اقرأ القيم الكاملة من الـ row الحالي + تعديلات data
+        cur_row = get_schedule(user_id, schedule_id) or {}
+        merged_interval = fields.get("interval_minutes", cur_row.get("interval_minutes") or 60)
+        merged_time = fields.get("run_at_time", cur_row.get("run_at_time"))
+        merged_dow = fields.get("run_at_dow", cur_row.get("run_at_dow"))
+        fields["next_run"] = _calc_next_run(merged_interval, now, merged_time, merged_dow)
 
     cols = ", ".join(f"{k}=%s" for k in fields)
     with db_cursor() as cur:
@@ -1442,13 +1544,17 @@ def delete_schedule(user_id: int, schedule_id: int) -> bool:
 def mark_schedule_ran(schedule_id: int) -> None:
     now = datetime.now(timezone.utc)
     with db_cursor() as cur:
-        # Get interval
-        cur.execute("SELECT interval_minutes FROM schedules WHERE id=%s",
+        cur.execute("SELECT interval_minutes, run_at_time, run_at_dow FROM schedules WHERE id=%s",
                     (schedule_id,))
         row = cur.fetchone()
         if not row:
             return
-        next_run = _calc_next_run(int(row["interval_minutes"]), now)
+        next_run = _calc_next_run(
+            int(row["interval_minutes"]),
+            now,
+            row.get("run_at_time"),
+            row.get("run_at_dow"),
+        )
         cur.execute("""
             UPDATE schedules
             SET last_run=%s, next_run=%s, total_runs=total_runs+1, updated_at=%s

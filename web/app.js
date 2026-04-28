@@ -1053,6 +1053,174 @@ function renderPosts() {
   });
 }
 
+// ==================== Media Library ====================
+
+function openMediaLibrary() {
+  // اجمع كل الصور + الفيديوهات من كل المنشورات
+  const allImages = [];
+  const allVideos = [];
+  STATE.allPosts.forEach(p => {
+    const media = Array.isArray(p.media) ? p.media : [];
+    media.forEach(m => {
+      if (!m.url) return;
+      const item = {
+        url: m.url,
+        thumbnail: m.thumbnail || m.url,
+        page_name: p.page_name,
+        post_id: p.post_id,
+        page_slug: p.page_slug,
+        post_text: (p.text || '').slice(0, 100),
+        post_url: p.post_url,
+      };
+      if (m.type === 'video') allVideos.push(item);
+      else allImages.push(item);
+    });
+    if (p.image_url && !media.some(m => m.url === p.image_url)) {
+      allImages.push({
+        url: p.image_url, thumbnail: p.image_url,
+        page_name: p.page_name, post_id: p.post_id, page_slug: p.page_slug,
+        post_text: (p.text || '').slice(0, 100), post_url: p.post_url,
+      });
+    }
+  });
+
+  openModal('🖼 مكتبة الوسائط', `
+    <div class="media-lib">
+      <div class="media-lib-tabs">
+        <button class="media-tab active" data-mtab="images">🖼 صور (${allImages.length})</button>
+        <button class="media-tab" data-mtab="videos">🎥 فيديوهات (${allVideos.length})</button>
+      </div>
+      <p class="note">انقر على أي صورة لفتحها داخلياً. الفيديوهات تفتح على فيسبوك.</p>
+
+      <div class="media-lib-pane" data-mtab="images">
+        ${allImages.length === 0
+          ? '<div class="empty"><p>لا توجد صور بعد.</p></div>'
+          : `<div class="media-lib-grid">
+               ${allImages.map((m, i) => `
+                 <button type="button" class="media-tile" data-mtype="image" data-idx="${i}" title="${escapeHtml(m.post_text)}">
+                   <img src="${escapeHtml(proxyMediaUrl(m.thumbnail))}" alt="" loading="lazy" onerror="this.parentElement.classList.add('img-broken')">
+                   <span class="media-tile-label">${escapeHtml(m.page_name)}</span>
+                 </button>
+               `).join('')}
+             </div>`
+        }
+      </div>
+
+      <div class="media-lib-pane" data-mtab="videos" hidden>
+        ${allVideos.length === 0
+          ? '<div class="empty"><p>لا توجد فيديوهات بعد.</p></div>'
+          : `<div class="media-lib-grid">
+               ${allVideos.map((m, i) => `
+                 <a href="${escapeHtml(ensureFullFbUrl(m.post_url || m.url))}" target="_blank" rel="noopener" class="media-tile video-tile" title="${escapeHtml(m.post_text)}">
+                   ${m.thumbnail
+                     ? `<img src="${escapeHtml(proxyMediaUrl(m.thumbnail))}" alt="" loading="lazy" onerror="this.parentElement.classList.add('img-broken')">`
+                     : '<div class="video-tile-bg"></div>'
+                   }
+                   <span class="play-overlay"></span>
+                   <span class="media-tile-label">${escapeHtml(m.page_name)}</span>
+                 </a>
+               `).join('')}
+             </div>`
+        }
+      </div>
+    </div>
+  `, 'lg');
+
+  // Tab switching
+  document.querySelectorAll('.media-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const k = tab.dataset.mtab;
+      document.querySelectorAll('.media-tab').forEach(t => t.classList.toggle('active', t === tab));
+      document.querySelectorAll('.media-lib-pane').forEach(p => p.hidden = p.dataset.mtab !== k);
+    });
+  });
+
+  // Image tile click → lightbox
+  document.querySelectorAll('.media-tile[data-mtype="image"]').forEach(tile => {
+    tile.addEventListener('click', () => {
+      const idx = parseInt(tile.dataset.idx);
+      openLightbox(allImages.map(x => x.url), idx);
+    });
+  });
+}
+
+// ==================== Image Lightbox ====================
+const LB = {
+  images: [],     // array of urls (original, not proxied)
+  index: 0,
+  caption: '',
+};
+
+function openLightbox(images, index = 0, caption = '') {
+  if (!Array.isArray(images) || images.length === 0) return;
+  LB.images = images;
+  LB.index = Math.max(0, Math.min(index, images.length - 1));
+  LB.caption = caption || '';
+
+  const lb = document.getElementById('lightbox');
+  if (!lb) return;
+  lb.hidden = false;
+  document.body.style.overflow = 'hidden';
+  _lightboxRender();
+
+  // bind once
+  if (!lb.dataset.bound) {
+    document.getElementById('lightboxClose').addEventListener('click', closeLightbox);
+    document.getElementById('lightboxPrev').addEventListener('click', () => _lightboxStep(-1));
+    document.getElementById('lightboxNext').addEventListener('click', () => _lightboxStep(+1));
+    lb.addEventListener('click', (e) => {
+      // close on backdrop click only (not on image / buttons)
+      if (e.target === lb) closeLightbox();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (lb.hidden) return;
+      if (e.key === 'Escape') closeLightbox();
+      else if (e.key === 'ArrowRight') _lightboxStep(-1);  // RTL: right = prev
+      else if (e.key === 'ArrowLeft')  _lightboxStep(+1);
+    });
+    lb.dataset.bound = '1';
+  }
+}
+
+function closeLightbox() {
+  const lb = document.getElementById('lightbox');
+  if (lb) lb.hidden = true;
+  document.body.style.overflow = '';
+}
+
+function _lightboxStep(delta) {
+  const n = LB.images.length;
+  if (n <= 1) return;
+  LB.index = (LB.index + delta + n) % n;
+  _lightboxRender();
+}
+
+function _lightboxRender() {
+  const img = document.getElementById('lightboxImg');
+  const counter = document.getElementById('lightboxCounter');
+  const download = document.getElementById('lightboxDownload');
+  const openNew = document.getElementById('lightboxOpenNew');
+
+  const url = LB.images[LB.index] || '';
+  const proxied = proxyMediaUrl(url);
+  if (img) {
+    img.classList.remove('loaded');
+    img.onload = () => img.classList.add('loaded');
+    img.src = proxied;
+  }
+  if (counter) counter.textContent = `${LB.index + 1} / ${LB.images.length}`;
+  if (download) {
+    download.href = proxied;
+    const fname = (url.split('?')[0].split('/').pop() || 'image').slice(0, 60);
+    download.download = fname || 'image';
+  }
+  if (openNew) openNew.href = proxied;
+
+  // Hide nav buttons if only 1 image
+  document.getElementById('lightboxPrev').style.visibility = LB.images.length > 1 ? 'visible' : 'hidden';
+  document.getElementById('lightboxNext').style.visibility = LB.images.length > 1 ? 'visible' : 'hidden';
+}
+
 // ==================== Pagination ====================
 
 function _renderPagination(total, page, perPage) {
@@ -1371,6 +1539,28 @@ function ensureFullFbUrl(url) {
   }
   // Probably a relative path without leading /
   return 'https://www.facebook.com/' + url;
+}
+
+/**
+ * هل هذا رابط فيديو يشتغل مباشرة في &lt;video&gt;؟
+ * - ينتهي بـ .mp4 / .mov / .webm / .m4v / .mkv
+ * - أو مضيف معروف يعطي ملفات فيديو مباشرة (video.fbcdn.net مثلاً)
+ *
+ * URLs مثل https://www.facebook.com/reel/123 ليست ملفات فيديو
+ * (إنها صفحات HTML)، فلازم نفتحها على فيسبوك بدلاً من <video>.
+ */
+function isPlayableVideoUrl(url) {
+  if (!url) return false;
+  const u = String(url).toLowerCase();
+  // امتدادات صريحة
+  if (/\.(mp4|mov|webm|m4v|mkv|ts)(\?|$)/.test(u)) return true;
+  // مضيفات معروفة
+  if (u.includes('video.fbcdn.net') || u.includes('video-')) return true;
+  // FB reels/watch/posts/photo URLs - صفحات HTML، مش playable
+  if (/facebook\.com\/(reel|watch|video|posts|photo|share)/.test(u)) return false;
+  if (u.startsWith('https://fb.watch/') || u.startsWith('https://www.fb.watch/')) return false;
+  // غير محسوم — اعتبره غير playable للأمان (يفتح على فيسبوك)
+  return false;
 }
 
 /**
@@ -2391,14 +2581,19 @@ function renderBackendHistory(active, history) {
     <div class="history-wrapper">
       ${active.length ? `
         <div class="history-section">
-          <h3>🔴 قيد التنفيذ (${active.length})</h3>
+          <div class="history-section-head">
+            <h3>🔴 قيد التنفيذ (${active.length})</h3>
+          </div>
           ${active.map(r => renderBackendRunRow(r, true)).join('')}
         </div>
       ` : ''}
 
       ${history.length ? `
         <div class="history-section">
-          <h3>📜 آخر التشغيلات (${history.length})</h3>
+          <div class="history-section-head">
+            <h3>📜 آخر التشغيلات (${history.length})</h3>
+            <button class="btn-refresh btn-sm btn-danger" id="clearHistoryBtn" type="button" title="حذف كل سجل العمليات">🗑 مسح السجل</button>
+          </div>
           ${history.map(r => renderBackendRunRow(r, false)).join('')}
         </div>
       ` : `
@@ -2422,6 +2617,32 @@ function renderBackendHistory(active, history) {
       }
     });
   });
+
+  // Clear history button
+  const clearBtn = document.getElementById('clearHistoryBtn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', async () => {
+      if (!confirm('هل أنت متأكد من مسح كل سجل العمليات؟ لا يمكن التراجع.')) return;
+      clearBtn.disabled = true;
+      clearBtn.textContent = '⏳ جاري المسح…';
+      try {
+        const res = await fetch('/api/history', { method: 'DELETE', credentials: 'include' });
+        const d = await res.json().catch(() => ({}));
+        if (res.ok) {
+          showToast(`✅ تم حذف ${d.deleted || 0} سجل`, 'success');
+          openHistoryModal();   // إعادة تحميل
+        } else {
+          showToast(d.error || 'فشل المسح', 'error');
+          clearBtn.disabled = false;
+          clearBtn.textContent = '🗑 مسح السجل';
+        }
+      } catch (e) {
+        showToast('خطأ: ' + e.message, 'error');
+        clearBtn.disabled = false;
+        clearBtn.textContent = '🗑 مسح السجل';
+      }
+    });
+  }
 }
 
 function renderBackendRunRow(r, isActive) {
@@ -3462,28 +3683,44 @@ function openPostDetailModal(post) {
   const externalLinks = post.external_links || [];
   const sourceBadge = renderSourceBadge(post.source);
 
-  // عرض كل الميديا - الفيديو يشتغل داخل المنصة بـ <video controls>
-  // والصور لها lightbox onclick
-  const renderMediaItem = (m) => {
+  // عرض كل الميديا - الفيديو يشتغل داخل المنصة لو رابط mp4،
+  // والصور تفتح في lightbox داخلي.
+  const renderMediaItem = (m, idx) => {
     const url = m.url || '';
     const proxied = proxyMediaUrl(url);
     if (m.type === 'video') {
+      if (isPlayableVideoUrl(url)) {
+        return `
+          <div class="media-item video-inline">
+            <video controls preload="metadata" playsinline
+                   ${m.thumbnail ? `poster="${escapeHtml(proxyMediaUrl(m.thumbnail))}"` : ''}>
+              <source src="${escapeHtml(proxied)}">
+              متصفحك لا يدعم تشغيل الفيديو.
+            </video>
+          </div>
+        `;
+      }
+      // FB reel/watch URL - ما نقدر نشغّله inline. نعرض thumbnail (إن وُجد)
+      // مع زر فيسبوك
+      const poster = m.thumbnail ? proxyMediaUrl(m.thumbnail) : '';
       return `
-        <div class="media-item video-inline">
-          <video controls preload="metadata" playsinline
-                 ${m.thumbnail ? `poster="${escapeHtml(proxyMediaUrl(m.thumbnail))}"` : ''}>
-            <source src="${escapeHtml(proxied)}">
-            متصفحك لا يدعم تشغيل الفيديو.
-          </video>
-        </div>
+        <a href="${escapeHtml(ensureFullFbUrl(url))}" target="_blank" rel="noopener noreferrer"
+           class="media-item video-external" title="مشاهدة على فيسبوك">
+          ${poster
+            ? `<img src="${escapeHtml(poster)}" alt="" loading="lazy">`
+            : '<div class="video-ext-bg"></div>'
+          }
+          <span class="play-overlay"></span>
+          <span class="video-ext-label">▶ شاهد على فيسبوك</span>
+        </a>
       `;
     }
+    // Image — فتح في lightbox داخلي
     return `
-      <a href="${escapeHtml(proxied)}" target="_blank" rel="noopener" class="media-item"
-         data-lightbox="${escapeHtml(proxied)}">
+      <button type="button" class="media-item media-image" data-lightbox-idx="${idx}">
         <img src="${escapeHtml(proxied)}" alt="" loading="lazy"
              onerror="this.parentElement.classList.add('broken')">
-      </a>
+      </button>
     `;
   };
 
@@ -3491,17 +3728,16 @@ function openPostDetailModal(post) {
     ? `<div class="detail-section">
          <h3>📎 الميديا (${media.length})</h3>
          <div class="detail-media-grid">
-           ${media.map(renderMediaItem).join('')}
+           ${media.map((m, i) => renderMediaItem(m, i)).join('')}
          </div>
        </div>`
     : (post.image_url
       ? `<div class="detail-section">
            <h3>📎 الميديا</h3>
            <div class="detail-media-grid">
-             <a href="${escapeHtml(proxyMediaUrl(post.image_url))}" target="_blank" rel="noopener" class="media-item"
-                data-lightbox="${escapeHtml(proxyMediaUrl(post.image_url))}">
+             <button type="button" class="media-item media-image" data-lightbox-idx="0">
                <img src="${escapeHtml(proxyMediaUrl(post.image_url))}" alt="" loading="lazy">
-             </a>
+             </button>
            </div>
          </div>` : '');
 
@@ -3642,6 +3878,20 @@ function openPostDetailModal(post) {
       </details>
     </div>
   `, 'lg');
+
+  // Image lightbox: clicking any media-image opens internal viewer
+  const galleryImages = (media.length ? media : (post.image_url ? [{url: post.image_url, type: 'image'}] : []))
+    .filter(m => m.type === 'image' || (m.type !== 'video' && m.url))
+    .map(m => m.url);
+  document.querySelectorAll('.media-image[data-lightbox-idx]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const allImgs = (media.length ? media : (post.image_url ? [{url: post.image_url, type: 'image'}] : []))
+        .map(m => m.url);
+      const idx = parseInt(btn.dataset.lightboxIdx) || 0;
+      // فلترة فقط على الصور (نخلي ترتيب lightbox مطابق لـ media list)
+      openLightbox(allImgs, idx, post.text);
+    });
+  });
 
   // Action handlers
   const cl = document.getElementById('copyPostLink');
@@ -4018,6 +4268,12 @@ function switchView(view) {
   document.querySelectorAll('.view-pane').forEach(p => {
     p.hidden = p.dataset.view !== view;
   });
+  // pagination تظهر فقط في view المنشورات
+  const pgBar = document.getElementById('postsPagination');
+  if (pgBar) pgBar.hidden = view !== 'posts';
+  // results-meta أيضاً مخصص للمنشورات فقط
+  const resultsMeta = document.querySelector('.results-meta');
+  if (resultsMeta) resultsMeta.hidden = view !== 'posts';
   if (view === 'analytics') {
     renderAnalyticsView();
   }
@@ -4507,11 +4763,48 @@ function renderScheduleForm(sched, pages) {
           <option value="180" ${s.interval_minutes === 180 ? 'selected' : ''}>كل 3 ساعات</option>
           <option value="360" ${s.interval_minutes === 360 || !s.interval_minutes ? 'selected' : ''}>كل 6 ساعات</option>
           <option value="720" ${s.interval_minutes === 720 ? 'selected' : ''}>كل 12 ساعة</option>
-          <option value="1440" ${s.interval_minutes === 1440 ? 'selected' : ''}>كل يوم</option>
-          <option value="10080" ${s.interval_minutes === 10080 ? 'selected' : ''}>كل أسبوع</option>
-          <option value="custom">مخصّص...</option>
+          <option value="1440" ${s.interval_minutes === 1440 ? 'selected' : ''}>كل يوم (يجب تحديد الساعة)</option>
+          <option value="10080" ${s.interval_minutes === 10080 ? 'selected' : ''}>كل أسبوع (يجب تحديد اليوم والساعة)</option>
+          <option value="custom" ${(s.interval_minutes && ![60,180,360,720,1440,10080].includes(s.interval_minutes)) ? 'selected' : ''}>مخصّص (عدد ساعات)</option>
         </select>
-        <input type="number" id="schedIntervalCustom" class="input" placeholder="مثلاً: 30 (دقيقة)" min="15" max="43200" hidden>
+
+        <!-- Custom: hours -->
+        <div id="schedIntervalCustomWrap" class="schedule-interval-detail" hidden>
+          <label class="filter-label">عدد الساعات بين كل تشغيل</label>
+          <input type="number" id="schedIntervalCustomHours" class="input"
+                 placeholder="مثلاً: 4"
+                 min="1" max="720"
+                 value="${s.interval_minutes && ![60,180,360,720,1440,10080].includes(s.interval_minutes)
+                          ? Math.round(s.interval_minutes / 60) : ''}">
+        </div>
+
+        <!-- Daily: time of day -->
+        <div id="schedDailyWrap" class="schedule-interval-detail" hidden>
+          <label class="filter-label">الساعة (24 ساعة)</label>
+          <input type="time" id="schedDailyTime" class="input" value="${s.run_at_time || '08:00'}">
+        </div>
+
+        <!-- Weekly: day + time -->
+        <div id="schedWeeklyWrap" class="schedule-interval-detail" hidden>
+          <div class="form-inline" style="gap:8px">
+            <div style="flex:1">
+              <label class="filter-label">اليوم</label>
+              <select id="schedWeeklyDay" class="select">
+                <option value="0" ${s.run_at_dow === 0 ? 'selected' : ''}>الأحد</option>
+                <option value="1" ${s.run_at_dow === 1 ? 'selected' : ''}>الإثنين</option>
+                <option value="2" ${s.run_at_dow === 2 ? 'selected' : ''}>الثلاثاء</option>
+                <option value="3" ${s.run_at_dow === 3 ? 'selected' : ''}>الأربعاء</option>
+                <option value="4" ${s.run_at_dow === 4 ? 'selected' : ''}>الخميس</option>
+                <option value="5" ${s.run_at_dow === 5 ? 'selected' : ''}>الجمعة</option>
+                <option value="6" ${s.run_at_dow === 6 ? 'selected' : ''}>السبت</option>
+              </select>
+            </div>
+            <div style="flex:1">
+              <label class="filter-label">الساعة</label>
+              <input type="time" id="schedWeeklyTime" class="input" value="${s.run_at_time || '08:00'}">
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="form-field">
@@ -4567,12 +4860,20 @@ function renderScheduleForm(sched, pages) {
 function bindScheduleForm(sched, pages) {
   const wrap = document.getElementById('scheduleFormWrap');
 
-  // Interval custom toggle
+  // Interval-specific detail panels: custom (hours), daily (time), weekly (day + time)
   const intervalSel = document.getElementById('schedInterval');
-  const intervalCustom = document.getElementById('schedIntervalCustom');
-  intervalSel.addEventListener('change', () => {
-    intervalCustom.hidden = intervalSel.value !== 'custom';
-  });
+  const customWrap  = document.getElementById('schedIntervalCustomWrap');
+  const dailyWrap   = document.getElementById('schedDailyWrap');
+  const weeklyWrap  = document.getElementById('schedWeeklyWrap');
+
+  function refreshIntervalUI() {
+    const v = intervalSel.value;
+    customWrap.hidden = v !== 'custom';
+    dailyWrap.hidden  = v !== '1440';
+    weeklyWrap.hidden = v !== '10080';
+  }
+  intervalSel.addEventListener('change', refreshIntervalUI);
+  refreshIntervalUI();   // initial
 
   // Date range custom toggle
   const dateRangeSel = document.getElementById('schedDateRange');
@@ -4601,10 +4902,35 @@ function bindScheduleForm(sched, pages) {
     }
 
     let intervalMinutes;
-    if (intervalSel.value === 'custom') {
-      intervalMinutes = parseInt(intervalCustom.value) || 60;
+    let runAtTime = null;       // "HH:MM" — لـ daily و weekly
+    let runAtDow = null;        // 0-6 — لـ weekly فقط
+
+    const v = intervalSel.value;
+    if (v === 'custom') {
+      const customHoursVal = parseInt(document.getElementById('schedIntervalCustomHours').value);
+      if (!customHoursVal || customHoursVal < 1) {
+        errEl.textContent = 'أدخل عدد الساعات (رقم > 0)';
+        errEl.hidden = false;
+        return;
+      }
+      intervalMinutes = customHoursVal * 60;
+    } else if (v === '1440') {
+      // daily — يحتاج وقت
+      const t = document.getElementById('schedDailyTime').value;
+      if (!t) { errEl.textContent = 'حدد الساعة'; errEl.hidden = false; return; }
+      runAtTime = t;
+      intervalMinutes = 1440;
+    } else if (v === '10080') {
+      // weekly — يحتاج يوم + ساعة
+      const t = document.getElementById('schedWeeklyTime').value;
+      const d = document.getElementById('schedWeeklyDay').value;
+      if (!t) { errEl.textContent = 'حدد الساعة'; errEl.hidden = false; return; }
+      if (d === '' || d === null) { errEl.textContent = 'حدد اليوم'; errEl.hidden = false; return; }
+      runAtTime = t;
+      runAtDow = parseInt(d);
+      intervalMinutes = 10080;
     } else {
-      intervalMinutes = parseInt(intervalSel.value);
+      intervalMinutes = parseInt(v);
     }
     if (intervalMinutes < 15) intervalMinutes = 15;
 
@@ -4616,6 +4942,8 @@ function bindScheduleForm(sched, pages) {
       name,
       enabled: sched ? sched.enabled : true,
       interval_minutes: intervalMinutes,
+      run_at_time: runAtTime,        // null لو مش daily/weekly
+      run_at_dow:  runAtDow,         // null لو مش weekly
       date_range_preset: dateRangeSel.value,
       custom_hours_back: parseInt(customHours.value) || 24,
       pages: selectedPages,
@@ -5375,7 +5703,7 @@ function setupListeners() {
   });
 
   els.triggerBtn.addEventListener('click', openTriggerModal);
-  els.managePagesBtn.addEventListener('click', openPagesModal);
+  if (els.managePagesBtn) els.managePagesBtn.addEventListener('click', openPagesModal);
   els.historyBtn.addEventListener('click', openHistoryModal);
   if (els.analyticsBtn) els.analyticsBtn.addEventListener('click', openAnalyticsModal);
   if (els.settingsBtn) els.settingsBtn.addEventListener('click', openSettingsModal);
@@ -5419,6 +5747,16 @@ function setupListeners() {
         if (usersTab) usersTab.click();
       }, 200);
     });
+  }
+
+  const menuManagePages = document.getElementById('menuManagePages');
+  if (menuManagePages) {
+    menuManagePages.addEventListener('click', () => openPagesModal());
+  }
+
+  const menuMediaLibrary = document.getElementById('menuMediaLibrary');
+  if (menuMediaLibrary) {
+    menuMediaLibrary.addEventListener('click', () => openMediaLibrary());
   }
 
   // Modal — يُغلق فقط بزر × أو Escape، النقر خارجه لا يغلقه
