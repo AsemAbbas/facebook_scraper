@@ -2118,15 +2118,15 @@ function bindExportModal() {
 /**
  * يربط handlers (toggle + drag) لعنصر export-field-item جديد
  * (مستخدم لإضافة custom column).
+ *
+ * ملاحظة: العنصر <label> فبالـ HTML المتصفح بيعمل toggle تلقائياً
+ * لما تنقر على الـ label. لذلك ما نضيف click handler يدوي عشان
+ * ما يصير double-toggle. فقط نسجّل على الـ change event.
  */
 function _attachExportFieldHandlers(item) {
   const cb = item.querySelector('.export-field-cb');
-  item.addEventListener('click', (e) => {
-    if (e.target === cb || e.target.closest('.ef-remove')) return;
-    cb.checked = !cb.checked;
-    item.classList.toggle('checked', cb.checked);
-    _persistExportConfig();
-  });
+  // المتصفح بيعمل toggle للـ checkbox تلقائياً عند click على <label>
+  // — نتابع التغيير عبر change event فقط
   cb.addEventListener('change', () => {
     item.classList.toggle('checked', cb.checked);
     _persistExportConfig();
@@ -3167,8 +3167,7 @@ function bindPagesManagerEvents() {
 
   // ===== Expand/collapse =====
   document.querySelectorAll('#pagesList .page-row-head').forEach(head => {
-    const toggle = (e) => {
-      if (e.target.closest('input, button, .switch')) return;
+    const toggle = () => {
       const row = head.closest('.page-row');
       row.classList.toggle('expanded');
       const body = row.querySelector('.page-row-body');
@@ -3176,9 +3175,14 @@ function bindPagesManagerEvents() {
       const chev = row.querySelector('.chev');
       if (chev) chev.style.transform = row.classList.contains('expanded') ? 'rotate(180deg)' : '';
     };
-    head.addEventListener('click', toggle);
+    const clickHandler = (e) => {
+      // ignore clicks on action buttons (test/delete) + checkbox/switch
+      if (e.target.closest('.btn-test, .page-delete, .switch, input')) return;
+      toggle();
+    };
+    head.addEventListener('click', clickHandler);
     head.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
     });
   });
 
