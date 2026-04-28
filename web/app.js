@@ -1708,6 +1708,46 @@ function findDuplicatePageIndex(page, list, ignoreIndex = -1) {
   return -1;
 }
 
+// ==================== Icon library (inline SVG) ====================
+// أيقونات Lucide-style 16px stroke-width=2 (للعناوين والأزرار)
+const ICONS = {
+  download:   '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  upload:     '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
+  trash:      '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  save:       '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>',
+  edit:       '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+  plus:       '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  x:          '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  check:      '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  filter:     '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>',
+  search:     '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  copy:       '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  link:       '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
+  play:       '<svg class="ic" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
+  refresh:    '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><polyline points="21 3 21 8 16 8"/></svg>',
+  settings:   '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  user:       '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  users:      '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  lock:       '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+  clock:      '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  calendar:   '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+  page:       '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  image:      '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+  video:      '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>',
+  bar_chart:  '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+  zap:        '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+  alert:      '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  external:   '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+  file_text:  '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
+  message:    '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  share:      '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
+  heart:      '<svg class="ic" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>',
+  film:       '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>',
+  printer:    '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>',
+};
+
+function ic(name) { return ICONS[name] || ''; }
+
 function showToast(msg, type = '') {
   document.querySelectorAll('.toast').forEach(t => t.remove());
   const toast = document.createElement('div');
@@ -1771,6 +1811,102 @@ function splitDateTime(iso) {
   return { date: s.slice(0, 10), time: s.slice(tIdx + 1, tIdx + 9) };
 }
 
+// ---------- Export config persistence ----------
+const EXPORT_CFG_KEY = 'marsad_export_config_v1';
+
+function _loadExportConfig() {
+  try {
+    const raw = localStorage.getItem(EXPORT_CFG_KEY);
+    if (!raw) return null;
+    const cfg = JSON.parse(raw);
+    if (!cfg || typeof cfg !== 'object') return null;
+    return cfg;
+  } catch { return null; }
+}
+
+function _saveExportConfig(cfg) {
+  try { localStorage.setItem(EXPORT_CFG_KEY, JSON.stringify(cfg)); } catch {}
+}
+
+/**
+ * يبني عناصر الحقول حسب الترتيب المحفوظ + أعمدة custom المضافة.
+ */
+function _buildExportFieldItems() {
+  const cfg = _loadExportConfig() || {};
+  const savedOrder   = Array.isArray(cfg.order) ? cfg.order : [];
+  const savedEnabled = Array.isArray(cfg.enabled) ? new Set(cfg.enabled) : null;
+  const customCols   = Array.isArray(cfg.custom) ? cfg.custom : [];
+
+  // الحقول الأساسية: بترتيب savedOrder، أو الترتيب الافتراضي لو مش محفوظ
+  let fieldsList = [];
+  if (savedOrder.length) {
+    // اتبع الترتيب المحفوظ، وأضف أي حقول جديدة (مش بالـ savedOrder) في الأخير
+    const knownIds = new Set(EXPORT_FIELDS.map(f => f.id));
+    for (const fid of savedOrder) {
+      if (fid.startsWith('custom:')) {
+        const cust = customCols.find(c => c.id === fid);
+        if (cust) fieldsList.push({ kind: 'custom', def: cust });
+      } else if (knownIds.has(fid)) {
+        const def = EXPORT_FIELDS.find(f => f.id === fid);
+        fieldsList.push({ kind: 'std', def });
+      }
+    }
+    // أي custom cols غير موجودين بالـ savedOrder → أضفهم
+    for (const c of customCols) {
+      if (!savedOrder.includes(c.id)) fieldsList.push({ kind: 'custom', def: c });
+    }
+    // أي حقول std غير موجودة → أضفها بعد
+    for (const f of EXPORT_FIELDS) {
+      if (!savedOrder.includes(f.id)) fieldsList.push({ kind: 'std', def: f });
+    }
+  } else {
+    fieldsList = EXPORT_FIELDS.map(f => ({ kind: 'std', def: f }));
+    // ضف أعمدة custom محفوظة (لو في)
+    for (const c of customCols) fieldsList.push({ kind: 'custom', def: c });
+  }
+
+  return fieldsList.map(item => {
+    const f = item.def;
+    let isEnabled;
+    if (savedEnabled) {
+      isEnabled = savedEnabled.has(f.id);
+    } else {
+      // أول مرة - استعمل الـ defaults
+      isEnabled = item.kind === 'custom' ? true : !f.off;
+    }
+    const isCustom = item.kind === 'custom';
+    return `
+      <label class="export-field-item ${isEnabled ? 'checked' : ''} ${isCustom ? 'is-custom' : ''}" draggable="true" data-field="${escapeHtml(f.id)}">
+        <span class="drag-grip" aria-hidden="true">⠿</span>
+        <input type="checkbox" class="export-field-cb" ${isEnabled ? 'checked' : ''}>
+        <span class="ef-label">${escapeHtml(f.label)}</span>
+        ${isCustom ? '<button type="button" class="ef-remove" title="حذف العمود" aria-label="حذف">×</button>' : ''}
+      </label>
+    `;
+  }).join('');
+}
+
+/**
+ * يجمع الترتيب + التفعيل + الأعمدة custom من الـ DOM ويحفظ.
+ */
+function _persistExportConfig() {
+  const items = Array.from(document.querySelectorAll('#exportFields .export-field-item'));
+  const order = items.map(i => i.dataset.field);
+  const enabled = items
+    .filter(i => i.querySelector('input').checked)
+    .map(i => i.dataset.field);
+
+  const customCols = [];
+  items.forEach(i => {
+    if (i.dataset.field.startsWith('custom:')) {
+      const lbl = i.querySelector('.ef-label')?.textContent || '';
+      customCols.push({ id: i.dataset.field, label: lbl });
+    }
+  });
+
+  _saveExportConfig({ order, enabled, custom: customCols });
+}
+
 function exportCSV() {
   // الزر القديم - الآن يفتح modal التصدير المتقدم
   openExportModal();
@@ -1786,7 +1922,7 @@ function openExportModal() {
   const filteredCount = posts.length;
   const isFiltered = filteredCount !== totalCount;
 
-  openModal('📤 تصدير المنشورات', `
+  openModal('تصدير المنشورات', `
     <div class="export-modal">
       <div class="export-info">
         <div class="export-stat">
@@ -1803,23 +1939,23 @@ function openExportModal() {
       </div>
 
       <div class="export-section">
-        <h4>📋 صيغة الملف</h4>
+        <h4>${ic('file_text')} صيغة الملف</h4>
         <div class="format-options">
           <label class="format-option">
             <input type="radio" name="exportFormat" value="xlsx" checked>
-            <span class="format-icon">📊</span>
+            <span class="format-icon">${ic('bar_chart')}</span>
             <strong>Excel (.xlsx)</strong>
             <small>الأفضل للمشاركة والتحليل</small>
           </label>
           <label class="format-option">
             <input type="radio" name="exportFormat" value="csv">
-            <span class="format-icon">📄</span>
+            <span class="format-icon">${ic('file_text')}</span>
             <strong>CSV</strong>
             <small>متوافق مع كل البرامج</small>
           </label>
           <label class="format-option">
             <input type="radio" name="exportFormat" value="json">
-            <span class="format-icon">📦</span>
+            <span class="format-icon">${ic('link')}</span>
             <strong>JSON</strong>
             <small>للمطورين والـ APIs</small>
           </label>
@@ -1828,27 +1964,25 @@ function openExportModal() {
 
       <div class="export-section">
         <div class="export-section-head">
-          <h4>🎛️ الحقول المضمّنة</h4>
+          <h4>${ic('settings')} الحقول المضمّنة</h4>
           <div class="export-section-actions">
             <button class="btn-refresh btn-sm" id="exportSelectAll" type="button">حدد الكل</button>
             <button class="btn-refresh btn-sm" id="exportSelectNone" type="button">مسح</button>
             <button class="btn-refresh btn-sm" id="exportSelectDefaults" type="button">افتراضي</button>
           </div>
         </div>
-        <p class="note" style="margin:6px 0">اسحب لإعادة الترتيب · اضغط لتفعيل/إلغاء</p>
+        <p class="note" style="margin:6px 0">اسحب لإعادة الترتيب · اضغط لتفعيل/إلغاء · إعداداتك تُحفظ تلقائياً</p>
         <div class="export-fields" id="exportFields">
-          ${EXPORT_FIELDS.map(f => `
-            <label class="export-field-item ${f.off ? '' : 'checked'}" draggable="true" data-field="${f.id}">
-              <span class="drag-grip" aria-hidden="true">⠿</span>
-              <input type="checkbox" class="export-field-cb" ${f.off ? '' : 'checked'}>
-              <span>${escapeHtml(f.label)}</span>
-            </label>
-          `).join('')}
+          ${_buildExportFieldItems()}
+        </div>
+        <div class="export-add-custom">
+          <input type="text" id="exportCustomColName" class="input" placeholder="أضف عمود جديد (مثلاً: تصنيف)" maxlength="40">
+          <button class="btn-trigger btn-sm" id="exportAddCustomCol" type="button">+ إضافة عمود</button>
         </div>
       </div>
 
       <div class="export-section">
-        <h4>↕️ ترتيب الصفوف</h4>
+        <h4>${ic('filter')} ترتيب الصفوف</h4>
         <select id="exportSort" class="select" style="max-width:300px">
           <option value="newest">الأحدث أولاً</option>
           <option value="oldest">الأقدم أولاً</option>
@@ -1860,7 +1994,7 @@ function openExportModal() {
       </div>
 
       <div class="export-section">
-        <h4>🔢 عدد المنشورات</h4>
+        <h4>${ic('file_text')} عدد المنشورات</h4>
         <div class="form-inline" style="gap:8px;align-items:center;flex-wrap:wrap">
           <label class="radio-chip">
             <input type="radio" name="exportLimit" value="all" checked>
@@ -1875,14 +2009,14 @@ function openExportModal() {
       </div>
 
       <div class="export-section">
-        <h4>📁 اسم الملف</h4>
+        <h4>${ic('file_text')} اسم الملف</h4>
         <input type="text" id="exportFilename" class="input" placeholder="marsad_posts" dir="ltr"
                value="marsad_posts_${new Date().toISOString().slice(0, 10)}">
       </div>
 
       <div class="export-actions">
         <button class="btn-refresh" id="exportCancelBtn" type="button">إلغاء</button>
-        <button class="btn-trigger" id="exportConfirmBtn" type="button">📤 تصدير</button>
+        <button class="btn-trigger has-icon" id="exportConfirmBtn" type="button">${ic('download')}<span>تصدير</span></button>
       </div>
     </div>
   `, 'lg');
@@ -1893,42 +2027,9 @@ function openExportModal() {
 function bindExportModal() {
   const fieldsEl = document.getElementById('exportFields');
 
+  // Click/drag handlers via shared helper (also persists changes)
   fieldsEl.querySelectorAll('.export-field-item').forEach(item => {
-    const cb = item.querySelector('.export-field-cb');
-    item.addEventListener('click', (e) => {
-      if (e.target === cb) return;
-      cb.checked = !cb.checked;
-      item.classList.toggle('checked', cb.checked);
-    });
-    cb.addEventListener('change', () => item.classList.toggle('checked', cb.checked));
-  });
-
-  // Drag & drop reorder
-  let dragged = null;
-  fieldsEl.querySelectorAll('.export-field-item').forEach(item => {
-    item.addEventListener('dragstart', (e) => {
-      dragged = item;
-      item.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    item.addEventListener('dragend', () => {
-      item.classList.remove('dragging');
-      fieldsEl.querySelectorAll('.export-field-item').forEach(i => i.classList.remove('drag-over'));
-      dragged = null;
-    });
-    item.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      if (item === dragged) return;
-      item.classList.add('drag-over');
-    });
-    item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
-    item.addEventListener('drop', (e) => {
-      e.preventDefault();
-      if (!dragged || dragged === item) return;
-      const rect = item.getBoundingClientRect();
-      const after = (e.clientY - rect.top) > rect.height / 2;
-      item.parentNode.insertBefore(dragged, after ? item.nextSibling : item);
-    });
+    _attachExportFieldHandlers(item);
   });
 
   document.getElementById('exportSelectAll')?.addEventListener('click', () => {
@@ -1936,21 +2037,72 @@ function bindExportModal() {
       i.querySelector('input').checked = true;
       i.classList.add('checked');
     });
+    _persistExportConfig();
   });
   document.getElementById('exportSelectNone')?.addEventListener('click', () => {
     fieldsEl.querySelectorAll('.export-field-item').forEach(i => {
       i.querySelector('input').checked = false;
       i.classList.remove('checked');
     });
+    _persistExportConfig();
   });
   document.getElementById('exportSelectDefaults')?.addEventListener('click', () => {
     fieldsEl.querySelectorAll('.export-field-item').forEach(i => {
       const fid = i.dataset.field;
       const def = EXPORT_FIELDS.find(f => f.id === fid);
-      const on = def && !def.off;
+      const isCustom = fid.startsWith('custom:');
+      const on = isCustom ? true : (def && !def.off);
       i.querySelector('input').checked = on;
       i.classList.toggle('checked', on);
     });
+    _persistExportConfig();
+  });
+
+  // Add custom column
+  const addBtn = document.getElementById('exportAddCustomCol');
+  const addInput = document.getElementById('exportCustomColName');
+  if (addBtn && addInput) {
+    const onAdd = () => {
+      const name = addInput.value.trim();
+      if (!name) {
+        showToast('أدخل اسم العمود', 'error');
+        return;
+      }
+      // generate id
+      const id = 'custom:' + name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_؀-ۿ]/g, '').slice(0, 32) + '_' + Date.now().toString(36).slice(-4);
+      const itemEl = document.createElement('label');
+      itemEl.className = 'export-field-item is-custom checked';
+      itemEl.draggable = true;
+      itemEl.dataset.field = id;
+      itemEl.innerHTML = `
+        <span class="drag-grip" aria-hidden="true">⠿</span>
+        <input type="checkbox" class="export-field-cb" checked>
+        <span class="ef-label">${escapeHtml(name)}</span>
+        <button type="button" class="ef-remove" title="حذف العمود" aria-label="حذف">×</button>
+      `;
+      fieldsEl.appendChild(itemEl);
+      addInput.value = '';
+      _attachExportFieldHandlers(itemEl);
+      _persistExportConfig();
+      showToast(`أُضيف عمود "${name}" — سيظهر فارغاً في الملف، وسيظل محفوظاً للمرات القادمة`, 'success');
+    };
+    addBtn.addEventListener('click', onAdd);
+    addInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); onAdd(); }
+    });
+  }
+
+  // Remove custom column (event delegation)
+  fieldsEl.addEventListener('click', (e) => {
+    const removeBtn = e.target.closest('.ef-remove');
+    if (!removeBtn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const item = removeBtn.closest('.export-field-item');
+    if (item) {
+      item.remove();
+      _persistExportConfig();
+    }
   });
 
   document.querySelectorAll('input[name="exportLimit"]').forEach(r => {
@@ -1961,6 +2113,51 @@ function bindExportModal() {
 
   document.getElementById('exportCancelBtn')?.addEventListener('click', closeModal);
   document.getElementById('exportConfirmBtn')?.addEventListener('click', performExport);
+}
+
+/**
+ * يربط handlers (toggle + drag) لعنصر export-field-item جديد
+ * (مستخدم لإضافة custom column).
+ */
+function _attachExportFieldHandlers(item) {
+  const cb = item.querySelector('.export-field-cb');
+  item.addEventListener('click', (e) => {
+    if (e.target === cb || e.target.closest('.ef-remove')) return;
+    cb.checked = !cb.checked;
+    item.classList.toggle('checked', cb.checked);
+    _persistExportConfig();
+  });
+  cb.addEventListener('change', () => {
+    item.classList.toggle('checked', cb.checked);
+    _persistExportConfig();
+  });
+
+  // drag
+  item.addEventListener('dragstart', (e) => {
+    item.classList.add('dragging');
+    window._dragged = item;
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  item.addEventListener('dragend', () => {
+    item.classList.remove('dragging');
+    document.querySelectorAll('.export-field-item').forEach(i => i.classList.remove('drag-over'));
+    window._dragged = null;
+    _persistExportConfig();
+  });
+  item.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (item === window._dragged) return;
+    item.classList.add('drag-over');
+  });
+  item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+  item.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const dragged = window._dragged;
+    if (!dragged || dragged === item) return;
+    const rect = item.getBoundingClientRect();
+    const after = (e.clientY - rect.top) > rect.height / 2;
+    item.parentNode.insertBefore(dragged, after ? item.nextSibling : item);
+  });
 }
 
 async function performExport() {
@@ -1976,7 +2173,14 @@ async function performExport() {
     const fieldsOrder = Array.from(document.querySelectorAll('#exportFields .export-field-item'));
     const chosen = fieldsOrder
       .filter(i => i.querySelector('input').checked)
-      .map(i => EXPORT_FIELDS.find(f => f.id === i.dataset.field))
+      .map(i => {
+        const fid = i.dataset.field;
+        if (fid.startsWith('custom:')) {
+          const lbl = i.querySelector('.ef-label')?.textContent || 'عمود مخصص';
+          return { id: fid, label: lbl, get: () => '' };
+        }
+        return EXPORT_FIELDS.find(f => f.id === fid);
+      })
       .filter(Boolean);
 
     if (!chosen.length) {
@@ -1985,6 +2189,9 @@ async function performExport() {
       btn.textContent = '📤 تصدير';
       return;
     }
+
+    // Persist final order/selection to localStorage
+    _persistExportConfig();
 
     let posts = [...STATE.filtered];
     posts.sort((a, b) => {

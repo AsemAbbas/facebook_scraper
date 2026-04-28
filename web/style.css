@@ -3239,6 +3239,40 @@ button:active {
 }
 
 /* ================================================================
+   Inline SVG icon helper (.ic) — Lucide-style 16px, currentColor
+   ================================================================ */
+svg.ic {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  flex-shrink: 0;
+  margin-inline-end: 4px;
+}
+
+/* h4 / button SVG inline — slightly larger */
+h4 svg.ic, .btn-trigger svg.ic, .btn-refresh svg.ic {
+  width: 1.05em;
+  height: 1.05em;
+}
+
+/* Buttons that have icon + label pair */
+.btn-trigger.has-icon, .btn-refresh.has-icon, .btn-meta.has-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-trigger.has-icon svg.ic { margin-inline-end: 0; }
+
+/* In format-icon SVG override sizing */
+.format-icon svg.ic {
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-bottom: 4px;
+  margin-inline-end: 0;
+}
+
+/* ================================================================
    Multi-select dropdown filter component
    ================================================================ */
 .multiselect {
@@ -3865,6 +3899,56 @@ button:active {
   border-style: dashed;
   border-color: var(--accent-600);
   background: var(--accent-100);
+}
+
+.export-field-item.is-custom {
+  border-style: dashed;
+}
+
+.export-field-item.is-custom .ef-label::before {
+  content: '✏️ ';
+  font-size: 0.85em;
+}
+
+.export-field-item .ef-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.export-field-item .ef-remove {
+  margin-inline-start: auto;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.export-field-item .ef-remove:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.export-add-custom {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.export-add-custom .input {
+  flex: 1;
 }
 
 .export-actions {
