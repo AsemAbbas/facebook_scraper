@@ -295,6 +295,12 @@
       <button class="btn-quick-range" data-range="7d">7أ</button>
       <button class="btn-quick-range" data-range="30d">30ي</button>
       <button class="btn-quick-range" data-range="all">كل</button>
+      <button class="btn-reset-filters" id="resetFilters" type="button" title="مسح كل الفلاتر" hidden>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+        <span>مسح الفلاتر</span>
+      </button>
     </div>
   </div>
 </section>
@@ -304,12 +310,6 @@
   <div class="meta-left">
     <span id="resultCount">—</span>
     <span id="activeFiltersBadge" class="active-filters-badge" hidden></span>
-    <button class="btn-reset-filters" id="resetFilters" type="button" title="مسح كل الفلاتر" hidden>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-      </svg>
-      <span>مسح الفلاتر</span>
-    </button>
   </div>
   <div class="meta-right">
     <div class="layout-toggle" role="group" aria-label="عرض">
@@ -343,10 +343,11 @@
   </div>
 </div>
 
-<!-- View tabs: Posts | Analytics -->
+<!-- View tabs: Posts | Analytics | Keywords -->
 <div class="view-tabs">
   <button class="view-tab active" data-view="posts">📝 المنشورات</button>
   <button class="view-tab" data-view="analytics">📊 الإحصاءات والتحليلات</button>
+  <button class="view-tab" data-view="keywords">🔑 الكلمات المفتاحية</button>
 </div>
 
 <!-- Posts grid -->
@@ -356,6 +357,9 @@
     <p>جاري التحميل…</p>
   </div>
 </main>
+
+<!-- Keywords (full page) -->
+<main class="keywords-view view-pane" id="keywordsView" data-view="keywords" hidden></main>
 
 <!-- Analytics (full page, uses the same filters at the top) -->
 <main class="analytics-view view-pane" id="analyticsView" data-view="analytics" hidden></main>

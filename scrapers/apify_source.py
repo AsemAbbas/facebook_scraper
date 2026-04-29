@@ -241,6 +241,41 @@ class ApifySource(BaseScraper):
 
     # ==================== Normalization ====================
 
+    @staticmethod
+    def _is_reel_or_video_post(item: dict) -> bool:
+        """
+        يكتشف هل المنشور reel/video بناءً على:
+          - URL يحتوي /reel/ أو /watch/ أو /videos/
+          - attachment type = "video"/"reel"
+          - يحتوي playable_url
+        """
+        # 1. URL fingerprint
+        url = (item.get("url") or item.get("postUrl") or "").lower()
+        if any(k in url for k in ("/reel/", "/reels/", "/watch/", "/videos/")):
+            return True
+
+        # 2. attachment metadata
+        for atts_key in ("attachments", "media"):
+            atts = item.get(atts_key)
+            if not isinstance(atts, list):
+                continue
+            for a in atts:
+                if not isinstance(a, dict):
+                    continue
+                t = (a.get("type") or a.get("__typename") or "").lower()
+                if t in ("video", "reel", "clip", "live", "videoautoplay"):
+                    return True
+                inner = a.get("media")
+                if isinstance(inner, dict) and inner.get("playable_url"):
+                    return True
+
+        # 3. top-level playable_url
+        if item.get("playable_url") or item.get("video_url") or item.get("videoUrl"):
+            return True
+
+        return False
+
+
     def _normalize_item(
         self,
         item: dict,
@@ -609,5 +644,13 @@ class ApifySource(BaseScraper):
             source=self.source_name,
         )
         post.extract_hashtags()
+        # 1. اشتقاق افتراضي من media[]
         post.post_type = post.derive_post_type()
+        # 2. override: لو الـ URL يحتوي /reel/ أو متعلق بفيديو حتى لو الميديا
+        # المستخرَجة كانت صور فقط (poster) — لازم نقولها فيديو
+        if self._is_reel_or_video_post(item):
+            post.post_type = "video"
+            # ضيف الـ URL الأصلي كـ video_url لو ما لقيناه (placeholder حتى يظهر مؤشر فيديو)
+            if not post.video_url and post.post_url:
+                post.video_url = post.post_url
         return post

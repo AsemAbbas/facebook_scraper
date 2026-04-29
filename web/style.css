@@ -2127,6 +2127,15 @@ button:active {
   gap: 3px;
   align-items: center;
   height: 40px;
+  flex-wrap: wrap;
+}
+
+/* Reset button when it sits inside the quick-range row */
+.filter-action-buttons .btn-reset-filters {
+  margin-inline-start: 6px;
+  height: 36px;
+  padding: 0 14px;
+  font-size: 0.78rem;
 }
 
 .btn-quick-range {
@@ -7510,4 +7519,175 @@ body.exporting-pdf .analytics-stamp { display: block !important; }
   .stats-bar {
     grid-template-columns: repeat(4, 1fr);
   }
+}
+
+/* ================================================================
+   Keywords view
+   ================================================================ */
+.keywords-view {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 1rem 2rem 2rem;
+}
+
+.kw-wrapper { display: flex; flex-direction: column; gap: 1rem; }
+
+.kw-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.kw-header-text { flex: 1; min-width: 200px; }
+.kw-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  margin: 0 0 0.25rem;
+}
+
+.kw-summary {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.kw-summary-item {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.kw-summary-item strong {
+  font-family: var(--font-display);
+  color: var(--accent-700);
+  font-size: 1.1em;
+}
+
+.kw-add-form {
+  display: flex;
+  gap: 8px;
+  background: var(--bg-elevated);
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex-wrap: wrap;
+}
+
+.kw-add-form .input { flex: 1; min-width: 200px; }
+.kw-add-form .select { max-width: 150px; }
+
+.kw-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.kw-card {
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.18s var(--ease);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 150px;
+}
+
+.kw-card:hover {
+  border-color: var(--accent-500);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px -4px rgba(249,115,22,0.18);
+}
+
+.kw-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.kw-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kw-card-text strong {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.kw-mode {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  background: var(--accent-50);
+  color: var(--accent-700);
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  width: fit-content;
+}
+
+.kw-card-stats {
+  text-align: center;
+  padding: 12px 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+}
+
+.kw-stat-num {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--accent-700);
+  line-height: 1;
+}
+
+.kw-stat-lbl {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.kw-card-footer {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.kw-card:hover .kw-card-footer {
+  color: var(--accent-700);
+  font-weight: 600;
+}
+
+.kw-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.kw-detail-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .keywords-view { padding: 0.5rem 0.75rem 1rem; }
+  .kw-add-form { flex-direction: column; }
+  .kw-add-form .select { max-width: 100%; }
 }

@@ -295,6 +295,21 @@ SCHEMA_STATEMENTS = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
     """
+    CREATE TABLE IF NOT EXISTS keywords (
+        id              INT AUTO_INCREMENT PRIMARY KEY,
+        user_id         INT NOT NULL,
+        text            VARCHAR(255) NOT NULL,
+        color           VARCHAR(20) DEFAULT '',
+        enabled         TINYINT(1) DEFAULT 1,
+        match_mode      VARCHAR(16) DEFAULT 'contains', -- contains | exact | hashtag
+        notes           TEXT,
+        created_at      DATETIME NOT NULL,
+        UNIQUE KEY uniq_user_kw (user_id, text(190)),
+        KEY idx_user (user_id),
+        CONSTRAINT fk_keywords_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+    """
     CREATE TABLE IF NOT EXISTS schedules (
         id              INT AUTO_INCREMENT PRIMARY KEY,
         user_id         INT NOT NULL,
@@ -1241,6 +1256,14 @@ def delete_jobs_all(user_id: int) -> int:
         return cur.rowcount
 
 
+def delete_job(user_id: int, job_uid: str) -> int:
+    """يمسح سطر واحد من السجل بالـ job_uid"""
+    with db_cursor() as cur:
+        cur.execute("DELETE FROM jobs WHERE user_id=%s AND job_uid=%s",
+                    (user_id, job_uid))
+        return cur.rowcount
+
+
 def _inflate_job(row: dict) -> dict:
     if not row:
         return row
@@ -1670,3 +1693,197 @@ def migrate_legacy_data(admin_user_id: int) -> dict:
 def bootstrap() -> None:
     """يُستدعى في بداية التطبيق"""
     init_db()
+
+
+# ======================================================================
+#  Keywords (per-user)
+# ======================================================================
+
+def list_keywords(user_id: int) -> list[dict]:
+    with db_cursor() as cur:
+        cur.execute("""
+            SELECT k.*,
+              (SELECT COUNT(*) FROM posts p
+                 WHERE p.user_id=%s AND (
+                   (k.match_mode='contains' AND p.text LIKE CONCAT('%%', k.text, '%%'))
+                   OR (k.match_mode='hashtag' AND p.text LIKE CONCAT('%%#', k.text, '%%'))
+                   OR (k.match_mode='exact' AND p.text=k.text)
+                 )
+              ) AS match_count
+            FROM keywords k WHERE user_id=%s
+            ORDER BY created_at DESC
+        """, (user_id, user_id))
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["enabled"] = bool(d["enabled"])
+            d["match_count"] = int(d.get("match_count") or 0)
+            for k in ("created_at",):
+                if d.get(k) and hasattr(d[k], "isoformat"):
+                    d[k] = d[k].isoformat()
+            rows.append(d)
+        return rows
+
+
+def get_keyword(user_id: int, kid: int) -> Optional[dict]:
+    with db_cursor() as cur:
+        cur.execute("SELECT * FROM keywords WHERE user_id=%s AND id=%s", (user_id, kid))
+        r = cur.fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        d["enabled"] = bool(d["enabled"])
+        return d
+
+
+def create_keyword(user_id: int, text: str, mode: str = "contains",
+                   color: str = "", notes: str = "") -> int:
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("نص فارغ")
+    if mode not in ("contains", "exact", "hashtag"):
+        mode = "contains"
+    now = datetime.now(timezone.utc)
+    with db_cursor() as cur:
+        cur.execute("""
+            INSERT IGNORE INTO keywords (user_id, text, color, enabled, match_mode, notes, created_at)
+            VALUES (%s, %s, %s, 1, %s, %s, %s)
+        """, (user_id, text[:255], color[:20], mode, notes[:1000], now))
+        return cur.lastrowid
+
+
+def update_keyword(user_id: int, kid: int, **kwargs) -> bool:
+    allowed = {}
+    for k in ("text", "color", "enabled", "match_mode", "notes"):
+        if k in kwargs:
+            v = kwargs[k]
+            if k == "enabled":
+                v = 1 if v else 0
+            elif k == "match_mode":
+                if v not in ("contains", "exact", "hashtag"):
+                    continue
+            allowed[k] = v
+    if not allowed:
+        return False
+    cols = ", ".join(f"{c}=%s" for c in allowed)
+    with db_cursor() as cur:
+        cur.execute(
+            f"UPDATE keywords SET {cols} WHERE user_id=%s AND id=%s",
+            (*allowed.values(), user_id, kid)
+        )
+        return cur.rowcount > 0
+
+
+def delete_keyword(user_id: int, kid: int) -> bool:
+    with db_cursor() as cur:
+        cur.execute("DELETE FROM keywords WHERE user_id=%s AND id=%s", (user_id, kid))
+        return cur.rowcount > 0
+
+
+def keyword_posts(user_id: int, kid: int, limit: int = 500) -> list[dict]:
+    """يرجع كل المنشورات اللي تطابق هذه الكلمة المفتاحية"""
+    kw = get_keyword(user_id, kid)
+    if not kw:
+        return []
+    text = kw["text"]
+    mode = kw.get("match_mode") or "contains"
+    where = "p.user_id=%s AND "
+    args = [user_id]
+    if mode == "exact":
+        where += "p.text = %s"
+        args.append(text)
+    elif mode == "hashtag":
+        where += "p.text LIKE %s"
+        args.append(f"%#{text}%")
+    else:
+        where += "p.text LIKE %s"
+        args.append(f"%{text}%")
+
+    sql = f"""
+        SELECT p.* FROM posts p
+        WHERE {where}
+        ORDER BY p.published_at DESC, p.scraped_at DESC
+        LIMIT %s
+    """
+    args.append(limit)
+
+    with db_cursor() as cur:
+        cur.execute(sql, args)
+        result = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if d.get("raw_json"):
+                try:
+                    raw = json.loads(d["raw_json"])
+                    for k in ("media", "comments_data", "reactions_breakdown",
+                              "hashtags", "mentions", "external_links",
+                              "author_name", "author_url", "is_pinned", "is_sponsored"):
+                        if k in raw and k not in d:
+                            d[k] = raw[k]
+                except Exception:
+                    pass
+            d.pop("raw_json", None)
+            for k in ("published_at", "scraped_at"):
+                if d.get(k) and hasattr(d[k], "isoformat"):
+                    d[k] = d[k].isoformat()
+            result.append(d)
+        return result
+
+
+def keyword_stats(user_id: int, kid: int) -> dict:
+    """إحصائيات تفصيلية لكلمة مفتاحية: count, by_page, by_day, top_posts"""
+    posts = keyword_posts(user_id, kid, limit=2000)
+    total = len(posts)
+    by_page = {}
+    by_day = {}
+    by_source = {}
+    by_type = {}
+    total_reactions = total_comments = total_shares = 0
+
+    for p in posts:
+        slug = p.get("page_slug") or ""
+        name = p.get("page_name") or slug
+        if name:
+            by_page[name] = by_page.get(name, 0) + 1
+
+        d_iso = p.get("published_at") or p.get("scraped_at") or ""
+        day = d_iso[:10] if d_iso else ""
+        if day:
+            by_day[day] = by_day.get(day, 0) + 1
+
+        src = p.get("source") or "unknown"
+        by_source[src] = by_source.get(src, 0) + 1
+
+        ptype = p.get("post_type") or "text"
+        by_type[ptype] = by_type.get(ptype, 0) + 1
+
+        total_reactions += int(p.get("reactions") or 0)
+        total_comments += int(p.get("comments") or 0)
+        total_shares += int(p.get("shares") or 0)
+
+    top = sorted(posts, key=lambda p: int(p.get("reactions") or 0), reverse=True)[:10]
+    top_lite = []
+    for p in top:
+        top_lite.append({
+            "post_id": p.get("post_id"),
+            "page_slug": p.get("page_slug"),
+            "page_name": p.get("page_name"),
+            "text": (p.get("text") or "")[:200],
+            "reactions": p.get("reactions"),
+            "comments": p.get("comments"),
+            "post_url": p.get("post_url"),
+            "published_at": p.get("published_at"),
+        })
+
+    return {
+        "total": total,
+        "total_reactions": total_reactions,
+        "total_comments": total_comments,
+        "total_shares": total_shares,
+        "avg_reactions": (total_reactions // total) if total else 0,
+        "by_page":   sorted(by_page.items(),   key=lambda kv: kv[1], reverse=True),
+        "by_day":    sorted(by_day.items()),
+        "by_source": list(by_source.items()),
+        "by_type":   list(by_type.items()),
+        "top_posts": top_lite,
+    }

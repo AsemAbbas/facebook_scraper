@@ -781,6 +781,71 @@ def api_history_clear():
     return jsonify({"ok": True, "deleted": n})
 
 
+@app.route("/api/history/<job_uid>", methods=["DELETE"])
+@login_required
+def api_history_delete_one(job_uid):
+    """يمسح سطر واحد من السجل (job_uid)"""
+    n = db.delete_job(current_user.id, job_uid)
+    return jsonify({"ok": bool(n), "deleted": n})
+
+
+# ======================================================================
+#  Keywords API
+# ======================================================================
+
+@app.route("/api/keywords", methods=["GET"])
+@login_required
+def api_keywords_list():
+    return jsonify({"keywords": db.list_keywords(current_user.id)})
+
+
+@app.route("/api/keywords", methods=["POST"])
+@login_required
+def api_keywords_create():
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "نص الكلمة المفتاحية مطلوب"}), 400
+    try:
+        kid = db.create_keyword(
+            current_user.id,
+            text=text,
+            mode=data.get("match_mode", "contains"),
+            color=data.get("color", ""),
+            notes=data.get("notes", ""),
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "id": kid})
+
+
+@app.route("/api/keywords/<int:kid>", methods=["PATCH"])
+@login_required
+def api_keywords_update(kid):
+    data = request.get_json(silent=True) or {}
+    ok = db.update_keyword(current_user.id, kid, **data)
+    return jsonify({"ok": bool(ok)})
+
+
+@app.route("/api/keywords/<int:kid>", methods=["DELETE"])
+@login_required
+def api_keywords_delete(kid):
+    ok = db.delete_keyword(current_user.id, kid)
+    return jsonify({"ok": bool(ok)})
+
+
+@app.route("/api/keywords/<int:kid>/posts", methods=["GET"])
+@login_required
+def api_keyword_posts(kid):
+    return jsonify({"posts": db.keyword_posts(current_user.id, kid)})
+
+
+@app.route("/api/keywords/<int:kid>/stats", methods=["GET"])
+@login_required
+def api_keyword_stats(kid):
+    return jsonify(db.keyword_stats(current_user.id, kid))
+
+
 # ======================================================================
 #  API: Test single URL
 # ======================================================================

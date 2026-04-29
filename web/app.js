@@ -2823,6 +2823,37 @@ function renderBackendHistory(active, history) {
     });
   });
 
+  // Per-row delete in history
+  document.querySelectorAll('.run-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const uid = btn.dataset.jobUid;
+      if (!uid) return;
+      if (!confirm('حذف هذا السطر من السجل؟')) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/api/history/${encodeURIComponent(uid)}`, {
+          method: 'DELETE', credentials: 'include',
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) {
+          // أزل السطر بدون reload كامل
+          btn.closest('.run-row').style.opacity = '0';
+          setTimeout(() => {
+            btn.closest('.run-row').remove();
+            showToast('تم حذف السطر', 'success');
+          }, 200);
+        } else {
+          showToast(d.error || 'فشل الحذف', 'error');
+          btn.disabled = false;
+        }
+      } catch (err) {
+        showToast('خطأ: ' + err.message, 'error');
+        btn.disabled = false;
+      }
+    });
+  });
+
   // Clear history button
   const clearBtn = document.getElementById('clearHistoryBtn');
   if (clearBtn) {
@@ -2865,8 +2896,9 @@ function renderBackendRunRow(r, isActive) {
   const params = r.params || {};
   const result = r.result || {};
 
+  const jobUid = r.id || r.job_uid;
   return `
-    <div class="run-row ${isActive ? 'clickable' : ''}" ${isActive ? `data-job-id="${r.id}"` : ''}>
+    <div class="run-row ${isActive ? 'clickable' : ''}" data-job-uid="${escapeHtml(jobUid || '')}" ${isActive ? `data-job-id="${r.id}"` : ''}>
       <div class="run-row-head">
         <span class="run-status ${s.color}">${s.label}</span>
         <span class="run-trigger">${r.trigger === 'schedule' ? '⏰ مجدول' : '👤 يدوي'}</span>
@@ -2882,7 +2914,10 @@ function renderBackendRunRow(r, isActive) {
           ? `· المصادر: ${(r.sources_used || result.sources_used).join(', ')}` : ''}
         ${params.slug ? `· صفحة: <code>${escapeHtml(params.slug)}</code>` : ''}
       </div>
-      ${isActive ? '<div class="run-row-actions"><span class="run-link">عرض التقدم ↑</span></div>' : ''}
+      <div class="run-row-actions">
+        ${isActive ? '<span class="run-link">عرض التقدم ↑</span>' : ''}
+        ${!isActive && jobUid ? `<button class="btn-icon-sm btn-danger run-delete-btn" data-job-uid="${escapeHtml(jobUid)}" type="button" title="حذف هذا السجل" onclick="event.stopPropagation()">×</button>` : ''}
+      </div>
     </div>
   `;
 }
@@ -4486,6 +4521,9 @@ function switchView(view) {
   if (view === 'analytics') {
     renderAnalyticsView();
   }
+  if (view === 'keywords') {
+    renderKeywordsView();
+  }
   // حفظ في localStorage عشان الـ view يتذكّر
   try { localStorage.setItem('marsad_view', view); } catch {}
 }
@@ -6084,6 +6122,286 @@ function debounce(fn, ms) {
     clearTimeout(t);
     t = setTimeout(() => fn(...args), ms);
   };
+}
+
+// ====================================================================
+// Keywords (الكلمات المفتاحية) — view & detail
+// ====================================================================
+
+let _keywordsCache = null;
+let _activeKeywordId = null;
+
+async function renderKeywordsView() {
+  const pane = document.getElementById('keywordsView');
+  if (!pane) return;
+
+  pane.innerHTML = '<div class="loading"><div class="spinner"></div><p>جاري التحميل…</p></div>';
+
+  try {
+    const res = await fetch('/api/keywords', { credentials: 'include' });
+    const data = await res.json();
+    _keywordsCache = data.keywords || [];
+  } catch (e) {
+    pane.innerHTML = `<p class="note">فشل التحميل: ${escapeHtml(e.message)}</p>`;
+    return;
+  }
+
+  if (_activeKeywordId) {
+    const kw = _keywordsCache.find(k => k.id === _activeKeywordId);
+    if (kw) {
+      await _renderKeywordDetail(pane, kw);
+      return;
+    }
+    _activeKeywordId = null;
+  }
+
+  _renderKeywordsList(pane);
+}
+
+function _renderKeywordsList(pane) {
+  const kws = _keywordsCache || [];
+  const totalMatches = kws.reduce((s, k) => s + (k.match_count || 0), 0);
+
+  pane.innerHTML = `
+    <div class="kw-wrapper">
+      <div class="kw-header">
+        <div class="kw-header-text">
+          <h2>🔑 الكلمات المفتاحية</h2>
+          <p class="analytics-sub">احفظ كلمات أو هاشتاقات تهمك. النظام يحسب تلقائياً عدد المنشورات اللي تطابقها وإحصائيات تفصيلية.</p>
+        </div>
+        <div class="kw-summary">
+          <span class="kw-summary-item"><strong>${formatNum(kws.length)}</strong> كلمة</span>
+          <span class="kw-summary-item"><strong>${formatNum(totalMatches)}</strong> مطابقة إجمالية</span>
+        </div>
+      </div>
+
+      <form class="kw-add-form" id="kwAddForm">
+        <input type="text" id="kwAddText" class="input" placeholder="أضف كلمة أو هاشتاق (مثلاً: غزة، فلسطين، الأقصى)" maxlength="200" required>
+        <select id="kwAddMode" class="select">
+          <option value="contains">يحتوي</option>
+          <option value="hashtag">هاشتاق</option>
+          <option value="exact">مطابق تماماً</option>
+        </select>
+        <button class="btn-trigger" type="submit">+ إضافة</button>
+      </form>
+
+      ${kws.length === 0 ? `
+        <div class="empty-state" style="margin-top:2rem">
+          <span class="empty-icon">🔑</span>
+          <h4>لا توجد كلمات مفتاحية بعد</h4>
+          <p>أضف أول كلمة في النموذج أعلاه لتبدأ الرصد التلقائي.</p>
+        </div>
+      ` : `
+        <div class="kw-grid">
+          ${kws.map(k => _renderKeywordCard(k)).join('')}
+        </div>
+      `}
+    </div>
+  `;
+
+  document.getElementById('kwAddForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = document.getElementById('kwAddText').value.trim();
+    const mode = document.getElementById('kwAddMode').value;
+    if (!text) return;
+    try {
+      const res = await fetch('/api/keywords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ text, match_mode: mode }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        showToast(d.error || 'فشل الإضافة', 'error');
+        return;
+      }
+      showToast(`✅ تمت إضافة "${text}"`, 'success');
+      renderKeywordsView();
+    } catch (err) {
+      showToast('خطأ: ' + err.message, 'error');
+    }
+  });
+
+  pane.querySelectorAll('.kw-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.kw-card-actions')) return;
+      const id = parseInt(card.dataset.id);
+      if (id) {
+        _activeKeywordId = id;
+        renderKeywordsView();
+      }
+    });
+  });
+
+  pane.querySelectorAll('.kw-delete').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.id);
+      const kw = _keywordsCache.find(k => k.id === id);
+      if (!confirm(`حذف الكلمة "${kw ? kw.text : ''}"؟`)) return;
+      try {
+        const res = await fetch(`/api/keywords/${id}`, { method: 'DELETE', credentials: 'include' });
+        if (res.ok) {
+          showToast('تم الحذف', 'success');
+          renderKeywordsView();
+        } else {
+          showToast('فشل الحذف', 'error');
+        }
+      } catch (err) {
+        showToast('خطأ: ' + err.message, 'error');
+      }
+    });
+  });
+}
+
+function _renderKeywordCard(k) {
+  const modeLabel = { contains: 'يحتوي', exact: 'مطابق', hashtag: 'هاشتاق' }[k.match_mode] || 'يحتوي';
+  return `
+    <div class="kw-card" data-id="${k.id}">
+      <div class="kw-card-head">
+        <div class="kw-card-text">
+          <strong>${escapeHtml(k.text)}</strong>
+          <span class="kw-mode">${modeLabel}</span>
+        </div>
+        <div class="kw-card-actions">
+          <button class="btn-icon-sm btn-danger kw-delete" data-id="${k.id}" type="button" title="حذف">×</button>
+        </div>
+      </div>
+      <div class="kw-card-stats">
+        <div class="kw-stat-num">${formatNum(k.match_count || 0)}</div>
+        <div class="kw-stat-lbl">مطابقة</div>
+      </div>
+      <div class="kw-card-footer">
+        <span>اضغط للتفاصيل والإحصائيات →</span>
+      </div>
+    </div>
+  `;
+}
+
+async function _renderKeywordDetail(pane, kw) {
+  pane.innerHTML = '<div class="loading"><div class="spinner"></div><p>جاري التحميل…</p></div>';
+
+  let stats, posts;
+  try {
+    const [statsRes, postsRes] = await Promise.all([
+      fetch(`/api/keywords/${kw.id}/stats`, { credentials: 'include' }),
+      fetch(`/api/keywords/${kw.id}/posts`, { credentials: 'include' }),
+    ]);
+    stats = await statsRes.json();
+    posts = (await postsRes.json()).posts || [];
+  } catch (e) {
+    pane.innerHTML = `<p class="note">فشل التحميل: ${escapeHtml(e.message)}</p>`;
+    return;
+  }
+
+  const modeLabel = { contains: 'يحتوي على', exact: 'مطابق تماماً لـ', hashtag: 'هاشتاق' }[kw.match_mode] || 'يحتوي على';
+
+  pane.innerHTML = `
+    <div class="kw-wrapper">
+      <div class="kw-detail-header">
+        <button class="btn-refresh btn-sm" id="kwBackBtn" type="button">← العودة لكل الكلمات</button>
+        <h2>🔑 ${escapeHtml(kw.text)} <span class="kw-mode">${modeLabel}</span></h2>
+      </div>
+
+      <div class="analytics-grid">
+        <div class="analytics-card">
+          <div class="analytics-num">${formatNum(stats.total)}</div>
+          <div class="analytics-label">إجمالي المنشورات</div>
+        </div>
+        <div class="analytics-card">
+          <div class="analytics-num">${formatNum(stats.total_reactions)}</div>
+          <div class="analytics-label">إجمالي التفاعلات</div>
+        </div>
+        <div class="analytics-card">
+          <div class="analytics-num">${formatNum(stats.avg_reactions)}</div>
+          <div class="analytics-label">متوسط التفاعل/منشور</div>
+        </div>
+        <div class="analytics-card">
+          <div class="analytics-num">${formatNum(stats.total_comments)}</div>
+          <div class="analytics-label">إجمالي التعليقات</div>
+        </div>
+        <div class="analytics-card">
+          <div class="analytics-num">${formatNum(stats.total_shares)}</div>
+          <div class="analytics-label">إجمالي المشاركات</div>
+        </div>
+      </div>
+
+      ${stats.by_day && stats.by_day.length ? `
+        <div class="analytics-section">
+          <h3>📈 المنشورات حسب اليوم (آخر ${Math.min(stats.by_day.length, 30)} يوم)</h3>
+          <div class="bar-chart">
+            ${(() => {
+              const last = stats.by_day.slice(-30);
+              const max = Math.max(...last.map(([_, v]) => v), 1);
+              return last.map(([day, count]) => {
+                const pct = (count / max) * 100;
+                return `
+                  <div class="bar-item" title="${day}: ${count}">
+                    <div class="bar-fill" style="height: ${pct}%"></div>
+                    <div class="bar-num">${count}</div>
+                    <div class="bar-day">${day.slice(5)}</div>
+                  </div>
+                `;
+              }).join('');
+            })()}
+          </div>
+        </div>
+      ` : ''}
+
+      ${stats.by_page && stats.by_page.length ? `
+        <div class="analytics-section">
+          <h3>📌 توزيع حسب الصفحة</h3>
+          <table class="analytics-table">
+            <thead><tr><th>الصفحة</th><th>منشورات</th></tr></thead>
+            <tbody>
+              ${stats.by_page.map(([name, c]) => `
+                <tr><td>${escapeHtml(name)}</td><td>${formatNum(c)}</td></tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
+
+      ${stats.top_posts && stats.top_posts.length ? `
+        <div class="analytics-section">
+          <h3>🔥 أعلى منشورات تفاعلاً</h3>
+          <div class="top-posts-list">
+            ${stats.top_posts.map((p, i) => `
+              <div class="top-post-row" data-post-id="${escapeHtml(p.post_id)}" data-post-slug="${escapeHtml(p.page_slug)}">
+                <div class="top-rank">#${i + 1}</div>
+                <div class="top-content">
+                  <div class="top-page">${escapeHtml(p.page_name || '')}</div>
+                  <div class="top-text">${escapeHtml(p.text)}</div>
+                </div>
+                <div class="top-reactions">${formatNum(p.reactions || 0)} ❤</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      ${posts.length === 0 ? `
+        <div class="empty-state">
+          <span class="empty-icon">🔍</span>
+          <h4>لا توجد منشورات تطابق هذه الكلمة</h4>
+          <p>سيتم تحديث المطابقات تلقائياً مع كل عملية سحب جديدة.</p>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  document.getElementById('kwBackBtn')?.addEventListener('click', () => {
+    _activeKeywordId = null;
+    renderKeywordsView();
+  });
+
+  pane.querySelectorAll('.top-post-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const post = (posts || []).find(p => p.post_id === row.dataset.postId && p.page_slug === row.dataset.postSlug);
+      if (post) openPostDetailModal(post);
+    });
+  });
 }
 
 // ========= NOTE: init() now called from auth.js after successful auth =========
