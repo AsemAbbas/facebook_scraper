@@ -4714,7 +4714,6 @@ async function openSettingsModal() {
     <div class="settings-modal">
       <div class="settings-tabs">
         <button class="settings-tab active" data-tab="sources">🔌 المصادر</button>
-        <button class="settings-tab" data-tab="schedules">🕐 المجدول</button>
         <button class="settings-tab" data-tab="account">👤 الحساب</button>
         ${AUTH && AUTH.user && AUTH.user.role === 'admin' ? `
           <button class="settings-tab" data-tab="users">👥 المستخدمون</button>
@@ -4723,9 +4722,6 @@ async function openSettingsModal() {
 
       <div id="settings-sources" class="settings-pane">
         ${renderSourcesSettings(sources)}
-      </div>
-      <div id="settings-schedules" class="settings-pane" hidden>
-        <div class="loading"><div class="spinner"></div></div>
       </div>
       <div id="settings-account" class="settings-pane" hidden>
         ${renderAccountSettings()}
@@ -4745,7 +4741,6 @@ async function openSettingsModal() {
       document.querySelectorAll('.settings-pane').forEach(p => p.hidden = true);
       document.getElementById(`settings-${tab.dataset.tab}`).hidden = false;
       if (tab.dataset.tab === 'users') loadUsersTab();
-      if (tab.dataset.tab === 'schedules') loadSchedulesTab();
     });
   });
 
@@ -4753,13 +4748,20 @@ async function openSettingsModal() {
   bindAccountSettings();
 }
 
-// ========= Schedules =========
+// ========= Schedules — own dedicated modal (not inside Settings) =========
+async function openSchedulesModal() {
+  openModal('🕐 المجدول · جدولة تلقائية', `
+    <div id="schedulesModalBody">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+  `, 'lg');
+  await loadSchedulesIntoModal();
+}
 
-async function loadSchedulesTab() {
-  const pane = document.getElementById('settings-schedules');
+async function loadSchedulesIntoModal() {
+  const pane = document.getElementById('schedulesModalBody');
   if (!pane) return;
   pane.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-
   try {
     const [schedRes, pagesRes] = await Promise.all([
       fetch('/api/schedules', { credentials: 'include' }),
@@ -4767,12 +4769,19 @@ async function loadSchedulesTab() {
     ]);
     const schedules = schedRes.ok ? (await schedRes.json()).schedules || [] : [];
     const pages = pagesRes.ok ? (await pagesRes.json()).pages || [] : [];
-
     pane.innerHTML = renderSchedulesTab(schedules, pages);
     bindSchedulesTab(pages);
   } catch (e) {
     pane.innerHTML = `<p class="note">فشل: ${escapeHtml(e.message)}</p>`;
   }
+}
+
+// ========= Schedules =========
+
+async function loadSchedulesTab() {
+  // Backward-compat: now uses the dedicated schedulesModalBody.
+  // Routes any old caller (after add/edit refresh) through the modal loader.
+  await loadSchedulesIntoModal();
 }
 
 function renderSchedulesTab(schedules, pages) {
@@ -6044,7 +6053,7 @@ function setupListeners() {
     menuMediaLibrary.addEventListener('click', () => openMediaLibrary());
   }
 
-  // History + Settings now live in the user menu (moved out of header)
+  // History + Settings + Schedules in user menu
   const menuHistory = document.getElementById('menuHistory');
   if (menuHistory) {
     menuHistory.addEventListener('click', () => openHistoryModal());
@@ -6053,6 +6062,11 @@ function setupListeners() {
   const menuSettings = document.getElementById('menuSettings');
   if (menuSettings) {
     menuSettings.addEventListener('click', () => openSettingsModal());
+  }
+
+  const menuSchedules = document.getElementById('menuSchedules');
+  if (menuSchedules) {
+    menuSchedules.addEventListener('click', () => openSchedulesModal());
   }
 
   // Modal — يُغلق فقط بزر × أو Escape، النقر خارجه لا يغلقه

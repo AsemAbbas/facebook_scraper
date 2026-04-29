@@ -1463,21 +1463,43 @@ button:active {
 }
 
 .btn-reset-filters {
-  background: var(--bg-elevated);
-  color: var(--text);
-  border: 1px solid var(--border);
-  font-size: 0.78rem;
-  padding: 10px 12px;
-  height: 40px;
-  box-shadow: var(--shadow-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #fef2f2, #fee2e2);
+  color: #b91c1c;
+  border: 1.5px solid #fca5a5;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 8px 16px;
+  height: 38px;
+  border-radius: var(--radius-full);
+  box-shadow: 0 1px 3px rgba(220, 38, 38, 0.08);
   justify-content: center;
   white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s var(--ease);
+}
+
+.btn-reset-filters svg {
+  flex-shrink: 0;
 }
 
 .btn-reset-filters:hover {
-  background: var(--danger);
+  background: linear-gradient(135deg, #ef4444, #dc2626);
   color: white;
-  border-color: var(--danger);
+  border-color: #b91c1c;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-reset-filters:active {
+  transform: translateY(0);
+}
+
+.btn-reset-filters[hidden] {
+  display: none !important;
 }
 
 /* Active filters badge */
