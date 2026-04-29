@@ -188,10 +188,19 @@ def logout():
 def me():
     if not current_user.is_authenticated:
         return jsonify({"authenticated": False}), 200
-    return jsonify({
+    payload = {
         "authenticated": True,
         "user": current_user.to_dict(),
-    })
+    }
+    # لو في impersonation نشط
+    imp_id = session.get("impersonator_id")
+    if imp_id:
+        payload["impersonating"] = True
+        payload["impersonator"] = {
+            "id": imp_id,
+            "username": session.get("impersonator_username") or "",
+        }
+    return payload
 
 
 @auth_bp.route("/api/auth/change-password", methods=["POST"])
@@ -306,6 +315,67 @@ def admin_delete_user(uid):
         return jsonify({"error": "لا يمكن حذف نفسك"}), 400
     db.delete_user(uid)
     return jsonify({"ok": True})
+
+
+# ======================================================================
+# Impersonation: admin يدخل كحساب مستخدم آخر للمتابعة وحلّ المشاكل
+# نخزّن الـ admin الأصلي في session تحت "impersonator_id" عشان نقدر نرجع.
+# ======================================================================
+
+@auth_bp.route("/api/admin/users/<int:uid>/impersonate", methods=["POST"])
+@admin_required
+def admin_impersonate(uid):
+    if uid == current_user.id:
+        return jsonify({"error": "أنت بالفعل تستخدم هذا الحساب"}), 400
+
+    target = db.get_user_by_id(uid)
+    if not target:
+        return jsonify({"error": "المستخدم غير موجود"}), 404
+    if not target.get("is_active", 1):
+        return jsonify({"error": "الحساب معطّل"}), 400
+
+    # احفظ admin الأصلي قبل ما نسجّل دخول كالـ target
+    original_admin_id = current_user.id
+    original_admin_username = current_user.username
+
+    target_user = User(target)
+    logout_user()
+    login_user(target_user)
+
+    # سجل الـ admin الأصلي في session — نستعمله للعودة
+    session["impersonator_id"] = original_admin_id
+    session["impersonator_username"] = original_admin_username
+
+    return jsonify({
+        "ok": True,
+        "user": target_user.to_dict(),
+        "impersonating": True,
+        "impersonator": {"id": original_admin_id, "username": original_admin_username},
+    })
+
+
+@auth_bp.route("/api/admin/stop-impersonating", methods=["POST"])
+@login_required
+def admin_stop_impersonating():
+    impersonator_id = session.get("impersonator_id")
+    if not impersonator_id:
+        return jsonify({"error": "لست في وضع impersonation"}), 400
+
+    original_data = db.get_user_by_id(int(impersonator_id))
+    if not original_data:
+        # الإدمن الأصلي حُذف — اخرج
+        session.pop("impersonator_id", None)
+        session.pop("impersonator_username", None)
+        logout_user()
+        return jsonify({"error": "الإدمن الأصلي غير موجود"}), 404
+
+    original_user = User(original_data)
+    logout_user()
+    login_user(original_user)
+    session.pop("impersonator_id", None)
+    session.pop("impersonator_username", None)
+
+    return jsonify({"ok": True, "user": original_user.to_dict(), "impersonating": False})
 
 
 def init_app(app):

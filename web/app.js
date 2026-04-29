@@ -83,6 +83,9 @@ async function init() {
   // User menu
   renderUserMenu();
 
+  // Check if admin is impersonating another user
+  checkImpersonationBanner();
+
   await loadIndex();
   await loadPagesConfig();   // يجب قبل loadAllPages عشان populate multiselect صح
   await loadAllPages();
@@ -364,14 +367,8 @@ function maybeShowFirstRunWizard() {
 }
 
 function setDefaultDateRange() {
-  // لو ما في saved filters، ضع آخر 24 ساعة
-  const saved = localStorage.getItem(LS.filters);
-  if (saved) return;
-
-  const now = new Date();
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  els.dateFrom.value = formatDateInput(yesterday);
-  els.dateTo.value = formatDateInput(now);
+  // الفلاتر تبدأ فاضية افتراضياً — المستخدم يطبّق فلتر إذا أراد
+  // (سلوك سابق كان يعبي آخر 24 ساعة تلقائياً مما خفّى المنشورات الأقدم)
 }
 
 function formatDateInput(d) {
@@ -714,6 +711,11 @@ function applyFilters() {
     els.activeFiltersBadge.hidden = true;
   }
 
+  // أظهر زر "مسح الفلاتر" فقط عند وجود فلاتر نشطة
+  if (els.resetFilters) {
+    els.resetFilters.hidden = activeFilters === 0;
+  }
+
   saveFilters();
   // إعادة تعيين رقم الصفحة عند تغيير الفلاتر (يبدأ من 1)
   STATE.currentPage = 1;
@@ -806,11 +808,8 @@ function resetAllFilters() {
   if (els.maxReactions) els.maxReactions.value = '';
   els.minComments.value = '';
   // checkboxes inside quick-filters multiselect get reset by the loop above
-  // إعادة تعيين التاريخ لآخر 24 ساعة
-  const now = new Date();
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  els.dateFrom.value = formatDateInput(yesterday);
-  els.dateTo.value = formatDateInput(now);
+  els.dateFrom.value = '';
+  els.dateTo.value = '';
   applyFilters();
   showToast('تم إعادة تعيين الفلاتر', 'success');
 }
@@ -5689,6 +5688,7 @@ function renderUserRow(u, me) {
         <span>${u.last_login ? 'آخر دخول: ' + formatRelTime(u.last_login) : 'لم يدخل بعد'}</span>
       </div>
       <div class="user-row-actions">
+        <button class="btn-trigger btn-sm" data-action="impersonate" title="ادخل كهذا المستخدم لمتابعة بياناته" ${isSelf ? 'disabled' : ''}>👁 دخول كهذا</button>
         <button class="btn-refresh btn-sm" data-action="edit" title="تعديل المستخدم">✏️ تعديل</button>
         <button class="btn-refresh btn-sm" data-action="reset-pass" title="إعادة تعيين كلمة السر">🔐 كلمة سر</button>
         <button class="btn-refresh btn-sm" data-action="toggle-role" title="${isAdmin ? 'إزالة صلاحية المشرف' : 'ترقية إلى مشرف'}" ${isSelf ? 'disabled' : ''}>${isAdmin ? '⬇️ إزالة إشراف' : '⬆️ ترقية'}</button>
@@ -5793,7 +5793,85 @@ function bindUsersTab() {
     else if (action === 'edit') {
       openEditUserModal(uid, row);
     }
+    else if (action === 'impersonate') {
+      if (!confirm(`الدخول كحساب "${uname}"؟ ستشاهد بياناته وصفحاته كأنك هو. تقدر ترجع لحسابك في أي وقت من الـ banner.`)) return;
+      try {
+        const r = await fetch(`/api/admin/users/${uid}/impersonate`, {
+          method: 'POST', credentials: 'include',
+        });
+        const d = await r.json();
+        if (!r.ok) {
+          showToast(d.error || 'فشل الدخول', 'error');
+          return;
+        }
+        showToast(`تم الدخول كحساب "${uname}" — جاري إعادة التحميل…`, 'success');
+        setTimeout(() => location.reload(), 600);
+      } catch (e) {
+        showToast('خطأ: ' + e.message, 'error');
+      }
+    }
   });
+}
+
+// ==================== Impersonation banner ====================
+
+async function checkImpersonationBanner() {
+  try {
+    const r = await fetch('/api/auth/me', { credentials: 'include' });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d && d.impersonating && d.impersonator) {
+      _showImpersonationBanner(d.user, d.impersonator);
+    } else {
+      _hideImpersonationBanner();
+    }
+  } catch {}
+}
+
+function _showImpersonationBanner(asUser, byAdmin) {
+  let banner = document.getElementById('impersonationBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'impersonationBanner';
+    banner.className = 'impersonation-banner';
+    document.body.insertBefore(banner, document.body.firstChild);
+  }
+  banner.innerHTML = `
+    <div class="imp-content">
+      <span class="imp-icon" aria-hidden="true">👁</span>
+      <span class="imp-text">
+        أنت داخل كحساب <strong>@${escapeHtml(asUser.username)}</strong>
+        (المُشرف الأصلي: <strong>@${escapeHtml(byAdmin.username)}</strong>)
+      </span>
+      <button class="imp-stop-btn" type="button" id="impStopBtn">
+        ↩ العودة لحسابي
+      </button>
+    </div>
+  `;
+  document.body.classList.add('is-impersonating');
+
+  document.getElementById('impStopBtn').addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/admin/stop-impersonating', {
+        method: 'POST', credentials: 'include',
+      });
+      const d = await r.json();
+      if (r.ok) {
+        showToast('عُدت إلى حسابك — جاري إعادة التحميل…', 'success');
+        setTimeout(() => location.reload(), 600);
+      } else {
+        showToast(d.error || 'فشل', 'error');
+      }
+    } catch (e) {
+      showToast('خطأ: ' + e.message, 'error');
+    }
+  });
+}
+
+function _hideImpersonationBanner() {
+  const banner = document.getElementById('impersonationBanner');
+  if (banner) banner.remove();
+  document.body.classList.remove('is-impersonating');
 }
 
 async function apiAdminUser(method, uid, body = null, okMsg = 'تم') {

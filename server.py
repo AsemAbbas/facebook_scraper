@@ -1101,18 +1101,32 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
 
 def _scheduler_loop():
     """خيط يفحص schedules المستحقة كل 30 ثانية"""
-    print("[scheduler] loop started")
+    from datetime import datetime as _dt
+    print(f"[scheduler] loop started (server local time: {_dt.now().isoformat(timespec='seconds')})")
+    iteration = 0
     while SCHEDULER_STATE.get("running"):
+        iteration += 1
         try:
             due = db.get_due_schedules()
+            # heartbeat كل 5 دقائق (10 iterations × 30s) عشان تعرف إنه شغّال
+            if iteration % 10 == 0:
+                print(f"[scheduler] heartbeat — local now: {_dt.now().isoformat(timespec='seconds')}, due: {len(due)}")
             for sched in due:
                 try:
+                    sched_id = sched.get('id')
+                    name = sched.get('name', '')
+                    next_run = sched.get('next_run')
+                    print(f"[scheduler] firing #{sched_id} '{name}' (next_run was: {next_run})")
                     _run_scheduled_job(sched["user_id"], sched)
-                    print(f"[scheduler] fired schedule #{sched['id']} '{sched.get('name')}'")
+                    print(f"[scheduler] ✅ fired schedule #{sched_id} '{name}'")
                 except Exception as e:
-                    print(f"[scheduler] error firing schedule {sched.get('id')}: {e}")
+                    import traceback
+                    print(f"[scheduler] ❌ error firing schedule {sched.get('id')}: {e}")
+                    traceback.print_exc()
         except Exception as e:
+            import traceback
             print(f"[scheduler] loop error: {e}")
+            traceback.print_exc()
         time.sleep(30)
 
 

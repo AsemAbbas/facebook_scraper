@@ -374,6 +374,40 @@ def init_db() -> None:
     except Exception as e:
         print(f"[db] sources migration skipped: {e}")
 
+    # Migration: إعادة حساب next_run لكل schedules مفعّلة بعد تحويل
+    # نظام الأوقات من UTC إلى server-local
+    try:
+        _recompute_schedules_next_run()
+    except Exception as e:
+        print(f"[db] schedules next_run recompute skipped: {e}")
+
+
+def _recompute_schedules_next_run() -> None:
+    """
+    بعد تغيير نظام التوقيت (UTC → server-local) في scheduler، نعيد حساب
+    next_run لكل المهام المفعلة عشان ما يضل في values قديمة معلّقة.
+    """
+    now_local = datetime.now()
+    with db_cursor() as cur:
+        cur.execute("SELECT id, interval_minutes, run_at_time, run_at_dow FROM schedules WHERE enabled=1")
+        rows = cur.fetchall() or []
+        if not rows:
+            return
+        for r in rows:
+            sid = r["id"]
+            try:
+                next_run = _calc_next_run(
+                    int(r["interval_minutes"]),
+                    now_local,
+                    r.get("run_at_time"),
+                    r.get("run_at_dow"),
+                )
+                cur.execute("UPDATE schedules SET next_run=%s WHERE id=%s", (next_run, sid))
+            except Exception as e:
+                print(f"[db] failed to recompute schedule {sid}: {e}")
+        if rows:
+            print(f"[db] recomputed next_run for {len(rows)} active schedule(s) — server-local time now: {now_local.isoformat(timespec='seconds')}")
+
     # Migration: schedules - run_at_time + run_at_dow
     try:
         _migrate_schedules_add_time_dow()
@@ -1363,17 +1397,25 @@ DATE_RANGE_PRESETS = {
 def _calc_next_run(
     interval_minutes: int,
     from_dt: Optional[datetime] = None,
-    run_at_time: Optional[str] = None,    # "HH:MM"
+    run_at_time: Optional[str] = None,    # "HH:MM" — server-local
     run_at_dow: Optional[int] = None,     # 0-6 (0=الأحد)
 ) -> datetime:
     """
-    يحسب next_run.
-      - 1440 (يومي) + run_at_time   → غدًا في تلك الساعة (أو اليوم إن لسا ما مرّت)
-      - 10080 (أسبوعي) + run_at_dow + run_at_time → اليوم القادم المطابق + تلك الساعة
-      - غير ذلك → الآن + interval_minutes (السلوك السابق)
+    يحسب next_run بالوقت المحلي للسيرفر (naive datetime).
+
+    ⏰ ملاحظة هامة: الأوقات (run_at_time) تُفسَّر كـ server-local time
+    (نفس timezone للسيرفر). MySQL DATETIME أيضاً naive. المقارنة
+    لاحقاً تتم بنفس النوع — كله naive datetime.
+
+      - 1440 (يومي) + run_at_time   → اليوم في تلك الساعة (لو ما مرّت) أو غدًا
+      - 10080 (أسبوعي) + run_at_dow + run_at_time → اليوم المطابق + الساعة
+      - غير ذلك → الآن + interval_minutes
     """
     from datetime import timedelta
-    base = from_dt or datetime.now(timezone.utc)
+    # Use naive (server-local) — متوافق مع MySQL DATETIME
+    base = from_dt or datetime.now()
+    if base.tzinfo is not None:
+        base = base.replace(tzinfo=None)
 
     # Daily with specific time
     if interval_minutes == 1440 and run_at_time:
@@ -1386,12 +1428,10 @@ def _calc_next_run(
     # Weekly with specific day + time
     if interval_minutes == 10080 and run_at_time is not None and run_at_dow is not None:
         h, m = _parse_hh_mm(run_at_time)
-        # Python's weekday(): Mon=0..Sun=6 ; نحن: Sun=0..Sat=6
-        # نحول من نظام "Sun=0" إلى "Mon=0"
-        target_py_weekday = (run_at_dow - 1) % 7    # 0(Sun)→6(Sun in py), 1(Mon)→0, ...
+        # Python weekday(): Mon=0..Sun=6 ; UI: Sun=0..Sat=6
+        target_py_weekday = (run_at_dow - 1) % 7
         days_ahead = (target_py_weekday - base.weekday()) % 7
         if days_ahead == 0:
-            # نفس اليوم - تحقق إذا الوقت لسا ما مرّ
             target = base.replace(hour=h, minute=m, second=0, microsecond=0)
             if target <= base:
                 days_ahead = 7
@@ -1455,7 +1495,7 @@ def get_schedule(user_id: int, schedule_id: int) -> Optional[dict]:
 
 
 def create_schedule(user_id: int, data: dict) -> int:
-    now = datetime.now(timezone.utc)
+    now = datetime.now()  # naive server-local (متوافق مع MySQL DATETIME)
     pages = data.get("pages") or []
     interval_minutes = int(data.get("interval_minutes") or 60)
     run_at_time = data.get("run_at_time") or None
@@ -1491,7 +1531,7 @@ def create_schedule(user_id: int, data: dict) -> int:
 
 
 def update_schedule(user_id: int, schedule_id: int, data: dict) -> bool:
-    now = datetime.now(timezone.utc)
+    now = datetime.now()  # naive server-local
     fields = {"updated_at": now}
 
     if "name" in data:
@@ -1542,7 +1582,7 @@ def delete_schedule(user_id: int, schedule_id: int) -> bool:
 
 
 def mark_schedule_ran(schedule_id: int) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now()  # server-local naive
     with db_cursor() as cur:
         cur.execute("SELECT interval_minutes, run_at_time, run_at_dow FROM schedules WHERE id=%s",
                     (schedule_id,))
@@ -1563,12 +1603,16 @@ def mark_schedule_ran(schedule_id: int) -> None:
 
 
 def get_due_schedules() -> list[dict]:
-    """يرجع كل schedules المستحقة (next_run <= now && enabled)"""
+    """
+    يرجع كل schedules المستحقة (next_run <= server-local-now && enabled).
+    naive comparison (server local time).
+    """
+    now_local = datetime.now()
     with db_cursor() as cur:
         cur.execute("""
             SELECT * FROM schedules
             WHERE enabled=1 AND (next_run IS NULL OR next_run <= %s)
-        """, (datetime.now(timezone.utc),))
+        """, (now_local,))
         result = []
         for r in cur.fetchall():
             d = dict(r)

@@ -3239,6 +3239,72 @@ button:active {
 }
 
 /* ================================================================
+   Impersonation banner (admin-as-user)
+   ================================================================ */
+.impersonation-banner {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border-bottom: 2px solid #f59e0b;
+  color: #78350f;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 8px 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  animation: imp-slide 0.3s ease;
+}
+
+@keyframes imp-slide {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+.imp-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  max-width: 1400px;
+  margin: 0 auto;
+  flex-wrap: wrap;
+}
+
+.imp-icon {
+  font-size: 1.2rem;
+}
+
+.imp-text {
+  flex: 1;
+  text-align: center;
+  min-width: 200px;
+}
+
+.imp-stop-btn {
+  background: #92400e;
+  color: white;
+  border: 0;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.imp-stop-btn:hover { background: #78350f; }
+
+/* Push the rest of the app down */
+body.is-impersonating header { top: 42px; }
+
+@media (max-width: 640px) {
+  .impersonation-banner { font-size: 0.8rem; padding: 6px 10px; }
+  .imp-text { font-size: 0.78rem; }
+}
+
+/* ================================================================
    Inline SVG icon helper (.ic) — Lucide-style 16px, currentColor
    ================================================================ */
 svg.ic {
@@ -7268,3 +7334,158 @@ h4 svg.ic, .btn-trigger svg.ic, .btn-refresh svg.ic {
    ================================================================ */
 body.exporting-pdf .analytics-header-actions { display: none !important; }
 body.exporting-pdf .analytics-stamp { display: block !important; }
+
+/* ================================================================
+   Mobile responsive polish (settings + modals + filters)
+   ================================================================ */
+@media (max-width: 640px) {
+  /* Settings tabs scroll horizontally if too many */
+  .settings-tabs {
+    display: flex !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 4px;
+    padding-bottom: 6px;
+    flex-wrap: nowrap !important;
+  }
+  .settings-tabs::-webkit-scrollbar { display: none; }
+  .settings-tab {
+    flex-shrink: 0;
+    white-space: nowrap;
+    font-size: 0.82rem !important;
+    padding: 8px 12px !important;
+  }
+
+  /* Modal full-screen on mobile */
+  .modal-overlay.active .modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+
+  .modal h2 {
+    font-size: 1.05rem !important;
+  }
+
+  /* Filters: single column on mobile */
+  .controls {
+    grid-template-columns: 1fr !important;
+    padding: 0.5rem 0.75rem !important;
+  }
+  .controls.advanced-row {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .filter-group.flex-grow {
+    grid-column: 1 / -1;
+  }
+
+  /* User row actions wrap properly */
+  .user-row {
+    grid-template-columns: 1fr !important;
+  }
+  .user-row-actions {
+    grid-column: 1 !important;
+    grid-row: auto !important;
+    justify-content: flex-start !important;
+    flex-wrap: wrap;
+  }
+  .user-row-actions .btn-refresh,
+  .user-row-actions .btn-trigger {
+    flex: 1 1 calc(50% - 4px);
+    justify-content: center;
+  }
+
+  /* Schedule rows */
+  .schedule-row .schedule-head {
+    flex-wrap: wrap;
+  }
+  .schedule-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Source cards */
+  .source-config-head {
+    flex-wrap: wrap;
+  }
+
+  /* Page rows in modal */
+  .pages-toolbar {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .pages-toolbar button {
+    flex: 1 1 calc(50% - 4px);
+    font-size: 0.8rem;
+  }
+  .pages-search-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .pages-search-input-wrap { min-width: 0; }
+
+  /* Layout toggle */
+  .meta-right {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .results-meta {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .meta-left {
+    text-align: center;
+  }
+
+  /* Multi-select dropdown stays inside viewport */
+  .multiselect-dropdown {
+    position: fixed !important;
+    inset-inline-start: 8px !important;
+    inset-inline-end: 8px !important;
+    top: auto !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  /* View tabs scroll */
+  .view-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding: 0 0.75rem !important;
+  }
+  .view-tab { white-space: nowrap; }
+
+  /* Stats compact */
+  .stats-bar {
+    grid-template-columns: repeat(2, 1fr) !important;
+    padding: 0.75rem !important;
+    gap: 0.5rem !important;
+  }
+
+  /* Posts grid: 1 column */
+  .posts-grid.layout-cards {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Header buttons wrap */
+  .header-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
+/* Tablet — 2 columns posts grid */
+@media (min-width: 641px) and (max-width: 900px) {
+  .posts-grid.layout-cards {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .stats-bar {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
