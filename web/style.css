@@ -1463,9 +1463,12 @@ button:active {
 }
 
 .btn-reset-filters {
-  display: inline-flex;
+  display: inline-flex !important;
+  flex-direction: row !important;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto !important;     /* لا تقبل grow/shrink من الـ flex parent */
+  width: auto !important;
   background: linear-gradient(135deg, #fef2f2, #fee2e2);
   color: #b91c1c;
   border: 1.5px solid #fca5a5;
@@ -1484,6 +1487,12 @@ button:active {
 
 .btn-reset-filters svg {
   flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.btn-reset-filters span {
+  white-space: nowrap;
 }
 
 .btn-reset-filters:hover {
@@ -2169,11 +2178,8 @@ button:active {
   border-color: var(--accent);
 }
 
-.btn-reset-filters {
-  width: 38px;
-  padding: 0;
-  flex: 0 0 38px;
-}
+/* (legacy small icon-only btn-reset-filters override removed —
+   the button is now a labeled red pill defined earlier) */
 
 /* ================================================================
    v2.2: New Footer
