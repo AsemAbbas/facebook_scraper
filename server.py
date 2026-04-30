@@ -13,6 +13,7 @@ Flask + MySQL + Flask-Login · متوافق مع cPanel.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -179,6 +180,57 @@ JOBS_LOCK = threading.Lock()
 # Scheduler state
 SCHEDULER_STATE = {"running": False, "thread": None}
 
+# ----------------------------------------------------------------------
+# Concurrency control
+# ----------------------------------------------------------------------
+# 1. USER_RUN_LOCKS: قفل واحد لكل مستخدم — لا أكثر من scrape واحد متزامن
+#    لنفس المستخدم. يمنع تكرار البيانات من schedule + manual scrape بنفس
+#    الوقت أو 2 schedules لنفس المستخدم.
+# 2. APIFY_TOKEN_LOCKS: قفل واحد لكل Apify token — لو عدة حسابات تستخدم
+#    نفس الـ token (مشاركة)، نضمن جلسة واحدة على Apify بنفس الوقت لتجنّب
+#    rate-limit الـ token + تداخل الـ runs.
+# الـ acquire يستخدم timeout صغير وما يبلوك إلى الأبد — لو ما لقى الـ
+# lock فاضي، نرفض الـ job مع رسالة واضحة.
+
+USER_RUN_LOCKS: dict[int, threading.Lock] = {}
+USER_RUN_LOCKS_GUARD = threading.Lock()
+
+APIFY_TOKEN_LOCKS: dict[str, threading.Lock] = {}
+APIFY_TOKEN_LOCKS_GUARD = threading.Lock()
+
+
+def _get_user_lock(user_id: int) -> threading.Lock:
+    with USER_RUN_LOCKS_GUARD:
+        lock = USER_RUN_LOCKS.get(user_id)
+        if lock is None:
+            lock = threading.Lock()
+            USER_RUN_LOCKS[user_id] = lock
+        return lock
+
+
+def _get_apify_token_lock(token: str) -> threading.Lock:
+    """قفل لكل Apify token (لمنع تداخل الـ runs على نفس الـ token المشترك)"""
+    if not token:
+        return threading.Lock()  # nop lock
+    # نستخدم hash للـ token عشان ما يظهر في memory في clear text
+    key = hashlib.sha1(token.encode("utf-8")).hexdigest()[:16] if token else ""
+    with APIFY_TOKEN_LOCKS_GUARD:
+        lock = APIFY_TOKEN_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            APIFY_TOKEN_LOCKS[key] = lock
+        return lock
+
+
+def _user_has_active_run(user_id: int) -> bool:
+    """هل في job قيد التشغيل لهذا المستخدم؟"""
+    with JOBS_LOCK:
+        for j in JOBS.values():
+            if (j.get("user_id") == user_id and
+                j.get("status") in ("queued", "running")):
+                return True
+    return False
+
 
 # ======================================================================
 #  API: System status
@@ -238,15 +290,29 @@ def api_pages_save():
     for p in data["pages"]:
         if not p.get("slug"):
             p["slug"] = _slugify(p.get("name", ""))
-    db.upsert_pages(current_user.id, data["pages"])
+    # delete_missing default = False — لا نحذف صفحات تلقائياً.
+    # المستخدم يحذف بشكل صريح عبر DELETE /api/pages/<slug>
+    delete_missing = bool(data.get("delete_missing", False))
+    db.upsert_pages(current_user.id, data["pages"], delete_missing=delete_missing)
     return jsonify({"ok": True, "count": len(data["pages"])})
 
 
 @app.route("/api/pages/<slug>", methods=["DELETE"])
 @login_required
 def api_pages_delete(slug):
-    db.delete_page(current_user.id, slug)
-    return jsonify({"ok": True})
+    """
+    يحذف صفحة. إذا أُرسل ?with_posts=1 يحذف منشوراتها أيضاً.
+    """
+    with_posts = request.args.get("with_posts") in ("1", "true", "yes")
+    posts_n = 0
+    if with_posts:
+        posts_n = db.delete_posts_by_page(current_user.id, slug)
+    pages_n = db.delete_page(current_user.id, slug)
+    return jsonify({
+        "ok": bool(pages_n),
+        "deleted_page": pages_n,
+        "deleted_posts": posts_n,
+    })
 
 
 def _slugify(text: str) -> str:
@@ -513,6 +579,12 @@ def api_scrape_start():
         "trigger": "manual",
     }
 
+    # ⚠️ امنع المستخدم من تشغيل أكثر من scrape بنفس الوقت
+    if _user_has_active_run(current_user.id):
+        return jsonify({
+            "error": "لديك عملية سحب قيد التنفيذ بالفعل. انتظر حتى تنتهي قبل بدء أخرى.",
+        }), 409
+
     with JOBS_LOCK:
         JOBS[job_uid] = {
             "id": job_uid,
@@ -530,13 +602,57 @@ def api_scrape_start():
     db.create_job(current_user.id, job_uid, params)
 
     t = threading.Thread(
-        target=_run_scrape_job,
+        target=_run_scrape_job_locked,
         args=(current_user.id, job_uid, params),
         daemon=True,
     )
     t.start()
 
     return jsonify({"job_id": job_uid, "status": "queued"})
+
+
+def _run_scrape_job_locked(user_id: int, job_uid: str, params: dict):
+    """
+    Wrapper يأخذ user-lock + apify-token-lock قبل الـ scrape الفعلي.
+    user-lock: يضمن لا أكثر من scrape واحد متزامن لنفس المستخدم
+    apify-token-lock: لو عدة users يستخدمون نفس Apify token (مشاركة)،
+                      نضمن جلسة واحدة على Apify بنفس الوقت.
+    """
+    user_lock = _get_user_lock(user_id)
+    if not user_lock.acquire(blocking=False):
+        # job ثاني للمستخدم نفسه يحاول يبدأ — نسجّل خطأ ونغادر
+        with JOBS_LOCK:
+            if job_uid in JOBS:
+                JOBS[job_uid]["status"] = "error"
+                JOBS[job_uid]["messages"].append({
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "level": "error",
+                    "text": "⛔ يوجد عملية سحب قيد التنفيذ لنفس المستخدم — تم الإلغاء"
+                })
+        try:
+            db.update_job(job_uid, status="error", finished_at=datetime.now(timezone.utc))
+        except Exception:
+            pass
+        return
+
+    try:
+        # احصل على apify token (لو موجود) للقفل المشترك بين المستخدمين
+        apify_token = ""
+        try:
+            apify_secret = db.get_source_with_token(user_id, "apify")
+            apify_token = (apify_secret or {}).get("token", "") if apify_secret and apify_secret.get("enabled") else ""
+        except Exception:
+            apify_token = ""
+
+        if apify_token:
+            tok_lock = _get_apify_token_lock(apify_token)
+            # نقفل بـ timeout طويل (وقت السحب الكامل) عشان ما نسقط الـ jobs
+            with tok_lock:
+                _run_scrape_job(user_id, job_uid, params)
+        else:
+            _run_scrape_job(user_id, job_uid, params)
+    finally:
+        user_lock.release()
 
 
 def _run_scrape_job(user_id: int, job_uid: str, params: dict):
@@ -1017,13 +1133,67 @@ def _run_scheduled_job(user_id: int, sched: dict):
         }
     db.create_job(user_id, job_uid, params)
 
+    # Skip if user already has a running scrape (prevents data races
+    # when manual + scheduled jobs would otherwise fire concurrently
+    # for the same user, or two schedules for the same user)
+    if _user_has_active_run(user_id):
+        with JOBS_LOCK:
+            if job_uid in JOBS:
+                JOBS[job_uid]["status"] = "error"
+                JOBS[job_uid]["messages"].append({
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "level": "warn",
+                    "text": "⏸ توجد عملية أخرى قيد التشغيل - تم تأجيل هذا الجدول"
+                })
+        try:
+            db.update_job(job_uid, status="error", finished_at=datetime.now(timezone.utc))
+        except Exception:
+            pass
+        # don't mark_schedule_ran — سيُعاد المحاولة بعد 30 ثانية
+        return
+
     t = threading.Thread(
-        target=_run_scheduled_scrape,
+        target=_run_scheduled_scrape_locked,
         args=(user_id, job_uid, params),
         daemon=True,
     )
     t.start()
     db.mark_schedule_ran(sched["id"])
+
+
+def _run_scheduled_scrape_locked(user_id: int, job_uid: str, params: dict):
+    """نفس wrapper الـ locked على المستخدم + Apify token المشترك"""
+    user_lock = _get_user_lock(user_id)
+    if not user_lock.acquire(blocking=False):
+        with JOBS_LOCK:
+            if job_uid in JOBS:
+                JOBS[job_uid]["status"] = "error"
+                JOBS[job_uid]["messages"].append({
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "level": "warn",
+                    "text": "⛔ تم الإلغاء — يوجد scrape آخر قيد التشغيل لنفس المستخدم"
+                })
+        try:
+            db.update_job(job_uid, status="error", finished_at=datetime.now(timezone.utc))
+        except Exception:
+            pass
+        return
+    try:
+        apify_token = ""
+        try:
+            apify_secret = db.get_source_with_token(user_id, "apify")
+            apify_token = (apify_secret or {}).get("token", "") if apify_secret and apify_secret.get("enabled") else ""
+        except Exception:
+            apify_token = ""
+
+        if apify_token:
+            tok_lock = _get_apify_token_lock(apify_token)
+            with tok_lock:
+                _run_scheduled_scrape(user_id, job_uid, params)
+        else:
+            _run_scheduled_scrape(user_id, job_uid, params)
+    finally:
+        user_lock.release()
 
 
 def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):

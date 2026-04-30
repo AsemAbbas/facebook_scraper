@@ -2153,14 +2153,15 @@ button:active {
   border: 1px solid var(--border);
   font-size: 0.72rem;
   font-weight: 700;
-  padding: 0;
+  padding: 0 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  flex: 1;
+  /* العرض الطبيعي حسب المحتوى — لا flex: 1 ولا تمدّد */
+  flex: 0 0 auto;
+  min-width: 38px;
   height: 100%;
   font-family: var(--font-display);
   transition: all 0.15s var(--ease);
-  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -7696,4 +7697,80 @@ body.exporting-pdf .analytics-stamp { display: block !important; }
   .keywords-view { padding: 0.5rem 0.75rem 1rem; }
   .kw-add-form { flex-direction: column; }
   .kw-add-form .select { max-width: 100%; }
+}
+
+/* ================================================================
+   Mini-confirm dialog (e.g. "حذف صفحة" with options)
+   مستقل عن modal الرئيسي عشان يطلع فوق modals مفتوحة
+   ================================================================ */
+.mini-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  animation: mc-fade 0.15s ease;
+}
+
+@keyframes mc-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.mini-confirm-box {
+  background: var(--bg-elevated);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  max-width: 460px;
+  width: 100%;
+  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.4);
+  border: 1px solid var(--border);
+  animation: mc-pop 0.18s var(--ease);
+}
+
+@keyframes mc-pop {
+  from { transform: scale(0.95); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+.mini-confirm-box h3 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  margin: 0 0 0.5rem;
+  color: var(--text);
+}
+
+.mini-confirm-box p {
+  color: var(--text-muted);
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+
+.mini-confirm-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mini-confirm-actions button {
+  width: 100%;
+  justify-content: center;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.btn-danger-strong {
+  background: linear-gradient(135deg, #ef4444, #dc2626) !important;
+  color: white !important;
+  border-color: #b91c1c !important;
+}
+
+.btn-danger-strong:hover {
+  background: linear-gradient(135deg, #dc2626, #b91c1c) !important;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
 }

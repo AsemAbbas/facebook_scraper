@@ -711,14 +711,20 @@ def _server_slugify(name: str, url: str = "") -> str:
     return f"page_{_SLUG_FALLBACK_COUNTER[0]}_{secrets.token_hex(3)}"
 
 
-def upsert_pages(user_id: int, pages: list[dict]) -> None:
+def upsert_pages(user_id: int, pages: list[dict], delete_missing: bool = False) -> None:
     """
-    استبدال كل صفحات المستخدم بالقائمة الجديدة.
+    حفظ صفحات المستخدم.
 
-    دفاع: لو الـ frontend أرسل صفحات بـ slug مكرّر (بعض الباقات يحدث ذلك مع
-    أسماء عربية تنتج نفس الـ slug)، نولّد slug فريد server-side قبل الـ
-    upsert. هذا منع فقدان صفوف بسبب UNIQUE KEY collision على
-    (user_id, slug).
+    delete_missing:
+      False (الافتراضي) — INSERT/UPDATE فقط للصفحات في القائمة. الصفحات
+        الموجودة في DB ولكن غير موجودة في `pages` تبقى كما هي.
+        ⚠️ هذا السلوك الآمن: لو الـ frontend أرسل بالغلط قائمة ناقصة
+        (state قديم، dedup خاطئ، إلخ)، لا تختفي صفحات.
+      True — replace كامل: احذف الصفحات اللي ليست في القائمة. يُستعمل
+        فقط عند طلب صريح من المستخدم لاستبدال الكل.
+
+    دفاع: لو أُرسل صفحات بـ slug مكرّر (يحدث مع أسماء عربية تنتج نفس
+    الـ slug)، نولّد slug فريد server-side قبل الـ upsert.
     """
     # 1) deduplicate slugs قبل DELETE/INSERT
     used_slugs: set = set()
@@ -740,15 +746,16 @@ def upsert_pages(user_id: int, pages: list[dict]) -> None:
 
     now = datetime.now(timezone.utc)
     with db_cursor() as cur:
-        incoming_slugs = [p.get("slug") for p in pages if p.get("slug")]
-        if incoming_slugs:
-            placeholders = ",".join(["%s"] * len(incoming_slugs))
-            cur.execute(
-                f"DELETE FROM pages WHERE user_id=%s AND slug NOT IN ({placeholders})",
-                (user_id, *incoming_slugs)
-            )
-        else:
-            cur.execute("DELETE FROM pages WHERE user_id=%s", (user_id,))
+        if delete_missing:
+            incoming_slugs = [p.get("slug") for p in pages if p.get("slug")]
+            if incoming_slugs:
+                placeholders = ",".join(["%s"] * len(incoming_slugs))
+                cur.execute(
+                    f"DELETE FROM pages WHERE user_id=%s AND slug NOT IN ({placeholders})",
+                    (user_id, *incoming_slugs)
+                )
+            else:
+                cur.execute("DELETE FROM pages WHERE user_id=%s", (user_id,))
 
         for p in pages:
             tags = json.dumps(p.get("tags") or [])

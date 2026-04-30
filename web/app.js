@@ -1747,6 +1747,51 @@ const ICONS = {
 
 function ic(name) { return ICONS[name] || ''; }
 
+/**
+ * Dialog مخصّص لحذف صفحة - يعطي ثلاث خيارات:
+ *   - "with-posts": حذف الصفحة + كل منشوراتها
+ *   - "page-only":  حذف الصفحة فقط (المنشورات تبقى)
+ *   - null:         إلغاء
+ * يُرجع Promise يحلّ بأحد القيم الثلاث.
+ */
+function _showDeletePageChoice(pageName) {
+  return new Promise((resolve) => {
+    // overlay مستقل عن modal-overlay الرئيسي
+    const overlay = document.createElement('div');
+    overlay.className = 'mini-confirm-overlay';
+    overlay.innerHTML = `
+      <div class="mini-confirm-box">
+        <h3>حذف "${escapeHtml(pageName)}"</h3>
+        <p>اختر ما تريد حذفه:</p>
+        <div class="mini-confirm-actions">
+          <button class="btn-refresh" data-act="cancel" type="button">إلغاء</button>
+          <button class="btn-refresh" data-act="page-only" type="button">حذف الصفحة فقط (الإبقاء على المنشورات)</button>
+          <button class="btn-trigger btn-danger-strong" data-act="with-posts" type="button">🗑 حذف الصفحة + كل منشوراتها</button>
+        </div>
+      </div>
+    `;
+    const close = (val) => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(val);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') close(null);
+    };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close(null);
+      const btn = e.target.closest('button[data-act]');
+      if (btn) {
+        const act = btn.dataset.act;
+        close(act === 'cancel' ? null : act);
+      }
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(overlay);
+  });
+}
+
+
 function showToast(msg, type = '') {
   document.querySelectorAll('.toast').forEach(t => t.remove());
   const toast = document.createElement('div');
@@ -3263,14 +3308,46 @@ function bindPagesManagerEvents() {
   });
 
   document.querySelectorAll('.page-delete').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const row = e.target.closest('.page-row');
       const index = parseInt(row.dataset.index);
-      if (confirm('حذف هذه الصفحة؟')) {
-        syncPagesFromUI();
-        STATE.pagesConfig.splice(index, 1);
-        openPagesModal();
+      const page = STATE.pagesConfig[index];
+      if (!page) return;
+      const slug = page.slug || '';
+      const name = page.name || slug || 'الصفحة';
+
+      // dialog مخصّص: حذف الصفحة فقط، أو حذف الصفحة + المنشورات
+      const choice = await _showDeletePageChoice(name);
+      if (!choice) return;     // cancel
+
+      // لو الصفحة موجودة في الـ DB (لها slug)، احذفها بـ API call مباشر
+      // عشان نحذف منشوراتها لو طلب المستخدم. إذا الصفحة مجرد draft
+      // محلية (ما لها slug)، فقط احذفها من الـ STATE.
+      if (slug && STATE.hasBackend) {
+        try {
+          const url = `/api/pages/${encodeURIComponent(slug)}` +
+                      (choice === 'with-posts' ? '?with_posts=1' : '');
+          const res = await fetch(url, { method: 'DELETE', credentials: 'include' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showToast(data.error || 'فشل الحذف', 'error');
+            return;
+          }
+          const msg = choice === 'with-posts'
+            ? `تم حذف "${name}" + ${data.deleted_posts || 0} منشور`
+            : `تم حذف "${name}"`;
+          showToast(msg, 'success');
+        } catch (err) {
+          showToast('خطأ: ' + err.message, 'error');
+          return;
+        }
       }
+
+      // أزلها من الـ state أيضاً
+      syncPagesFromUI();
+      STATE.pagesConfig.splice(index, 1);
+      openPagesModal();
     });
   });
 
