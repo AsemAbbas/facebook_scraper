@@ -223,6 +223,11 @@ class BaseScraper(ABC):
         """
         فحص هل المنشور ضمن النطاق الزمني.
         لو ما عنده published_at، يعتبره ضمن النطاق (ما نرفضه).
+
+        ملاحظة مهمة: التواريخ بصيغة yyyy-mm-dd (بدون وقت):
+          - date_from → بداية اليوم 00:00:00 UTC (شامل)
+          - date_to   → نهاية اليوم 23:59:59 UTC (شامل) ← مش 00:00:00!
+        هذا يضمن أن المنشور المنشور بأي ساعة من يوم date_to يدخل ضمن النطاق.
         """
         if not date_from and not date_to:
             return True
@@ -233,6 +238,10 @@ class BaseScraper(ABC):
             post_dt = datetime.fromisoformat(post.published_at.replace("Z", "+00:00"))
         except ValueError:
             return True
+
+        def _is_date_only(s: str) -> bool:
+            """true لو السلسلة yyyy-mm-dd فقط (بدون وقت)"""
+            return "T" not in s and " " not in s and len(s) <= 10
 
         if date_from:
             try:
@@ -246,7 +255,13 @@ class BaseScraper(ABC):
 
         if date_to:
             try:
+                date_only = _is_date_only(date_to)
                 to_dt = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
+                if date_only:
+                    # نهاية اليوم بدلاً من بدايته
+                    to_dt = to_dt.replace(
+                        hour=23, minute=59, second=59, microsecond=999999
+                    )
                 if to_dt.tzinfo is None:
                     to_dt = to_dt.replace(tzinfo=timezone.utc)
                 if post_dt > to_dt:

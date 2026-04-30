@@ -148,6 +148,58 @@ def _resolve_max_posts(page_value, date_from=None, date_to=None) -> int:
     return 1000   # cap عالي - الفلترة بالتاريخ
 
 
+def _build_no_posts_msg(source_name: str, scraper) -> str:
+    """
+    يبني رسالة واضحة للمستخدم عند رجوع 0 منشورات.
+    يقرأ scraper.last_diagnostic لمعرفة السبب الحقيقي:
+      - dataset فاضي فعلاً → "لم يرجع منشورات"
+      - كل البوستات خارج نطاق التاريخ → نخبره بآخر منشور متاح
+      - بوستات قصيرة/غير صالحة → نخبره
+    """
+    diag = getattr(scraper, "last_diagnostic", None) or {}
+    items_count = diag.get("items_count", 0)
+    if items_count == 0:
+        return f"  ⚠️  {source_name}: لم يرجع منشورات (الصفحة قد تكون مغلقة أو خاصة)"
+
+    outside = diag.get("outside_date", 0)
+    invalid = diag.get("invalid", 0)
+    short = diag.get("short", 0)
+    exception = diag.get("exception", 0)
+
+    # الحالة الأكثر شيوعاً: كل البوستات خارج النطاق الزمني
+    if outside == items_count and outside > 0:
+        from datetime import datetime as _dt
+        newest_ts = diag.get("newest_ts")
+        df = diag.get("date_from")
+        dt = diag.get("date_to")
+        range_str = f"{df or '—'} → {dt or '—'}"
+        if newest_ts:
+            newest_str = _dt.fromtimestamp(newest_ts).strftime("%Y-%m-%d %H:%M")
+            return (
+                f"  ⚠️  {source_name}: {items_count} منشور موجود لكن جميعها "
+                f"خارج النطاق ({range_str}) — آخر منشور: {newest_str}. "
+                f"وسّع النطاق الزمني للحصول على بيانات."
+            )
+        return (
+            f"  ⚠️  {source_name}: {items_count} منشور خارج النطاق ({range_str}). "
+            f"وسّع النطاق الزمني."
+        )
+
+    # حالات أخرى: نخبر المستخدم بالتفصيل
+    parts = []
+    if outside:
+        parts.append(f"{outside} خارج النطاق")
+    if invalid:
+        parts.append(f"{invalid} غير صالحة")
+    if short:
+        parts.append(f"{short} قصيرة جداً")
+    if exception:
+        parts.append(f"{exception} فشل في المعالجة")
+    if parts:
+        return f"  ⚠️  {source_name}: 0 من {items_count} منشور اجتاز ({', '.join(parts)})"
+    return f"  ⚠️  {source_name}: لم يرجع منشورات (dataset={items_count})"
+
+
 def _build_user_sources(user_id: int) -> dict:
     """
     يبني dict { source_name: instance } للمصادر المفعّلة لهذا المستخدم.
@@ -768,7 +820,7 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
                     success_count += 1
                     sources_used.add(chosen)
                 else:
-                    push_msg("warn", f"  ⚠️  {chosen}: لم يرجع منشورات")
+                    push_msg("warn", _build_no_posts_msg(chosen, src))
             except Exception as e:
                 push_msg("error", f"  ❌ {chosen}: {str(e)[:120]}")
 
@@ -1294,7 +1346,7 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
                     success_count += 1
                     sources_used.add(chosen)
                 else:
-                    push_msg("warn", f"  ⚠️  {chosen}: لم يرجع منشورات")
+                    push_msg("warn", _build_no_posts_msg(chosen, src))
             except Exception as e:
                 push_msg("error", f"  ❌ {chosen}: {str(e)[:120]}")
 

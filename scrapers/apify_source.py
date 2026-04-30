@@ -60,6 +60,12 @@ class ApifySource(BaseScraper):
             "Content-Type": "application/json",
         }
 
+        # معلومات تشخيصية لآخر عملية scrape — يقرأها server.py لعرض رسالة واضحة
+        # عند فشل السحب أو رجوع 0 منشورات.
+        # keys: items_count, passed, invalid, short, outside_date, exception,
+        #       newest_ts, oldest_ts (unix seconds)
+        self.last_diagnostic: dict = {}
+
     async def health_check(self) -> bool:
         """تأكد من صلاحية Apify token"""
         if not self.token:
@@ -89,6 +95,9 @@ class ApifySource(BaseScraper):
                 "[apify] APIFY_TOKEN غير موجود. أضفه في GitHub Secrets."
             )
 
+        # reset diagnostic لأي scrape جديد
+        self.last_diagnostic = {}
+
         print(f"  💎 [apify] تشغيل actor للصفحة: {page_url}")
         if date_from or date_to:
             print(f"     📅 نطاق التاريخ: {date_from or '—'} → {date_to or '—'}")
@@ -107,7 +116,12 @@ class ApifySource(BaseScraper):
         # 4. حوّل لـ UnifiedPost + فلترة التاريخ
         posts: list[UnifiedPost] = []
         n_invalid = n_short = n_outside_date = n_exception = 0
+        all_timestamps: list[float] = []  # لتتبع أحدث/أقدم تاريخ في الـ dataset
         for item in items[:max_posts * 2]:
+            # اجمع التاريخ من الـ item قبل أي معالجة (للـ diagnostic)
+            ts = self._extract_timestamp(item)
+            if ts:
+                all_timestamps.append(ts)
             try:
                 post = self._normalize_item(item, page_slug, page_name, page_url)
             except Exception as e:
@@ -134,11 +148,58 @@ class ApifySource(BaseScraper):
             if len(posts) >= max_posts:
                 break
 
+        # خزّن diagnostic لأجل server.py
+        self.last_diagnostic = {
+            "items_count": len(items),
+            "passed": len(posts),
+            "invalid": n_invalid,
+            "short": n_short,
+            "outside_date": n_outside_date,
+            "exception": n_exception,
+            "newest_ts": max(all_timestamps) if all_timestamps else None,
+            "oldest_ts": min(all_timestamps) if all_timestamps else None,
+            "date_from": date_from,
+            "date_to": date_to,
+        }
+
         if not posts and items:
+            extra = ""
+            if all_timestamps:
+                from datetime import datetime as _dt
+                newest = _dt.fromtimestamp(max(all_timestamps)).strftime("%Y-%m-%d %H:%M")
+                oldest = _dt.fromtimestamp(min(all_timestamps)).strftime("%Y-%m-%d %H:%M")
+                extra = f" | آخر منشور: {newest} | أقدم منشور: {oldest}"
             print(f"  ⚠️  [apify] {len(items)} item(s) في dataset لكن صفر اجتاز:"
-                  f" invalid={n_invalid}, short={n_short}, outside_date={n_outside_date}, exception={n_exception}")
+                  f" invalid={n_invalid}, short={n_short}, outside_date={n_outside_date}, exception={n_exception}{extra}")
 
         return posts
+
+    @staticmethod
+    def _extract_timestamp(item: dict) -> Optional[float]:
+        """يستخرج unix timestamp من item بأي شكل ممكن. يرجع None لو ما لقي."""
+        if not isinstance(item, dict):
+            return None
+        raw = (
+            item.get("createdAt")
+            or item.get("created_at")
+            or item.get("time")
+            or item.get("timestamp")
+            or item.get("publishedAt")
+            or item.get("created_time")
+        )
+        if isinstance(raw, (int, float)) and raw > 0:
+            ts = float(raw)
+            # تحويل ms إلى s لو لزم
+            if ts > 1e12:
+                ts /= 1000
+            return ts
+        if isinstance(raw, str) and raw:
+            try:
+                from datetime import datetime as _dt
+                return _dt.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                return None
+        return None
 
     # ==================== Apify API Calls ====================
 
