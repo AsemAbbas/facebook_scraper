@@ -102,22 +102,41 @@ class ApifySource(BaseScraper):
 
         # 3. اسحب النتائج
         items = await self._fetch_results(dataset_id)
+        print(f"    📦 [apify] dataset {dataset_id}: {len(items)} item(s)")
 
-        # حافظ على raw item داخل post.raw عشان view-raw يعرض الأصل (debug)
         # 4. حوّل لـ UnifiedPost + فلترة التاريخ
         posts: list[UnifiedPost] = []
-        for item in items[:max_posts * 2]:  # اسحب ضعف العدد لأن فيه فلترة
-            post = self._normalize_item(item, page_slug, page_name, page_url)
-            if post and post.is_valid():
-                # احفظ raw للـ debug
-                post.raw = item if isinstance(item, dict) else {}
-                if self.post_in_date_range(post, date_from, date_to):
-                    posts.append(post)
-                    preview = post.text[:50].replace("\n", " ")
-                    media_n = len(post.media)
-                    print(f"    ✓ #{len(posts)}: {preview}  ({media_n} media)")
-                    if len(posts) >= max_posts:
-                        break
+        n_invalid = n_short = n_outside_date = n_exception = 0
+        for item in items[:max_posts * 2]:
+            try:
+                post = self._normalize_item(item, page_slug, page_name, page_url)
+            except Exception as e:
+                n_exception += 1
+                # show first few characters of the item we failed on
+                snippet = str(item)[:80] if isinstance(item, dict) else type(item).__name__
+                print(f"  ⚠️  [apify] _normalize_item raised: {e} on {snippet}")
+                continue
+            if not post:
+                n_invalid += 1
+                continue
+            if not post.is_valid():
+                n_short += 1
+                continue
+            # احفظ raw للـ debug
+            post.raw = item if isinstance(item, dict) else {}
+            if not self.post_in_date_range(post, date_from, date_to):
+                n_outside_date += 1
+                continue
+            posts.append(post)
+            preview = post.text[:50].replace("\n", " ")
+            media_n = len(post.media)
+            print(f"    ✓ #{len(posts)}: {preview}  ({media_n} media)")
+            if len(posts) >= max_posts:
+                break
+
+        if not posts and items:
+            print(f"  ⚠️  [apify] {len(items)} item(s) في dataset لكن صفر اجتاز:"
+                  f" invalid={n_invalid}, short={n_short}, outside_date={n_outside_date}, exception={n_exception}")
 
         return posts
 
@@ -225,7 +244,8 @@ class ApifySource(BaseScraper):
 
     async def _fetch_results(self, dataset_id: str) -> list[dict]:
         """اسحب البنود من dataset"""
-        url = f"{APIFY_BASE}/datasets/{dataset_id}/items?clean=true&format=json"
+        # نزيل clean=true لأنه أحياناً يفلتر البنود الـ raw
+        url = f"{APIFY_BASE}/datasets/{dataset_id}/items?format=json"
 
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -234,10 +254,26 @@ class ApifySource(BaseScraper):
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as r:
                 if r.status != 200:
+                    body = await r.text()
                     raise SourceUnavailableError(
-                        f"[apify] فشل سحب النتائج: HTTP {r.status}"
+                        f"[apify] فشل سحب النتائج: HTTP {r.status} - {body[:200]}"
                     )
-                return await r.json()
+                data = await r.json()
+                # Apify dataset API يرجع array مباشرة، لكن أحياناً
+                # يكون wrapped في {data: {items: [...]}}
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict):
+                    if isinstance(data.get("items"), list):
+                        return data["items"]
+                    if isinstance(data.get("data"), dict):
+                        items = data["data"].get("items")
+                        if isinstance(items, list):
+                            return items
+                    if isinstance(data.get("data"), list):
+                        return data["data"]
+                print(f"  ⚠️  [apify] استجابة dataset غير متوقعة: {type(data).__name__}")
+                return []
 
     # ==================== Normalization ====================
 
