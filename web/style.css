@@ -7774,3 +7774,161 @@ body.exporting-pdf .analytics-stamp { display: block !important; }
   background: linear-gradient(135deg, #dc2626, #b91c1c) !important;
   box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
 }
+
+/* ================================================================
+   Mobile horizontal-scroll guard
+   --------------------------------------------------------------
+   حل شامل لمنع السكرول الجانبي على الموبايل. يمنع:
+     - عناصر بحجم أكبر من viewport
+     - tables بدون overflow wrapper
+     - URLs/نصوص طويلة بدون wrap
+     - min-width كبيرة في flex containers
+     - position: absolute/fixed تخرج عن viewport
+   ================================================================ */
+html, body {
+  overflow-x: clip;       /* يمنع scroll أفقي بدون كسر sticky positioning */
+  max-width: 100%;
+}
+
+/* fallback للمتصفحات اللي ما تدعم clip */
+@supports not (overflow: clip) {
+  html, body { overflow-x: hidden; }
+}
+
+@media (max-width: 768px) {
+  /* قاعدة عامة: كل عنصر مباشر في الـ root أو main containers
+     لا يتجاوز viewport */
+  body > *,
+  #appRoot > *,
+  main > * {
+    max-width: 100vw;
+  }
+
+  /* الصور والميديا تتقيد بحجم الحاوي */
+  img, video, iframe, canvas, svg {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* النصوص الطويلة مثل URLs أو IDs تنكسر */
+  .post-text,
+  .post-title,
+  .url-display,
+  .page-url,
+  .raw-link,
+  code, pre {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* pre/code للسجلات والمعرّفات - scroll داخلي بدل تكسير الـ layout */
+  pre, code {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* tables تتلف داخل wrapper بـ scroll */
+  table {
+    max-width: 100%;
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* الـ flex containers الرئيسية تسمح للأطفال بالـ shrink */
+  .header-inner,
+  .header-actions,
+  .results-meta,
+  .meta-right,
+  .meta-left,
+  .pages-toolbar,
+  .pages-search-bar,
+  .schedule-row,
+  .schedule-head,
+  .schedule-actions,
+  .source-config-head,
+  .filter-group,
+  .controls,
+  .stats-bar,
+  .post-card,
+  .user-row,
+  .user-row-actions {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* الـ inputs/selects الواسعة تتقيد بالحاوي */
+  .input,
+  .select,
+  textarea {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  /* الـ time-presets/preset-btn buttons تنحشر داخل صف */
+  .time-presets {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .preset-btn {
+    flex: 0 1 auto;
+    font-size: 0.78rem;
+    padding: 6px 10px;
+  }
+
+  /* أي عنصر بـ min-width كبير على الموبايل - نلغيه */
+  [class*="trigger-"] .input,
+  .kw-add-form .input,
+  .pages-search-input,
+  .multiselect-trigger {
+    min-width: 0 !important;
+  }
+
+  /* العناصر بـ position: fixed/absolute لا تخرج عن viewport */
+  .toast,
+  .modal-overlay,
+  .multiselect-dropdown,
+  .mini-confirm-overlay {
+    max-width: 100vw;
+  }
+
+  /* dropdown floats داخل viewport */
+  .multiselect-dropdown {
+    inset-inline-start: 8px !important;
+    inset-inline-end: 8px !important;
+    width: auto !important;
+    max-width: calc(100vw - 16px) !important;
+  }
+
+  /* progress modal بـ messages طويلة */
+  .progress-messages,
+  .job-messages {
+    max-width: 100%;
+    overflow-x: auto;
+    word-break: break-word;
+  }
+}
+
+/* شاشات صغيرة جداً (≤ 380px) — تشديد إضافي */
+@media (max-width: 380px) {
+  .header-inner,
+  .stats-bar,
+  .controls,
+  .results-meta,
+  .posts-grid {
+    padding-left: 0.625rem !important;
+    padding-right: 0.625rem !important;
+  }
+
+  /* الزرار الكبيرة على الهيدر تصير icon-only */
+  .header-actions .btn-text-label {
+    display: none;
+  }
+
+  /* preset buttons أصغر */
+  .preset-btn {
+    font-size: 0.72rem;
+    padding: 5px 8px;
+  }
+}
