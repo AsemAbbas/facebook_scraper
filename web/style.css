@@ -7970,3 +7970,169 @@ html, body {
     padding: 5px 8px;
   }
 }
+
+/* ================================================================
+   Job Detail Modal — تفاصيل log لعملية سحب منتهية
+   ================================================================ */
+.job-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: 70vh;
+}
+
+.job-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 1rem;
+  background: var(--bg-muted);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.job-detail-meta .meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.job-detail-meta .meta-row strong {
+  color: var(--accent-700);
+  font-size: 1rem;
+}
+
+.job-detail-meta .meta-params {
+  font-size: 0.82rem;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.job-detail-meta .meta-params code {
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.job-detail-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.job-detail-toolbar strong {
+  font-size: 0.92rem;
+  color: var(--text);
+}
+
+.job-detail-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.job-detail-log {
+  background: #0f172a;       /* dark for log readability */
+  color: #e2e8f0;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  max-height: 45vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--ink-700);
+}
+
+.job-detail-log .log-line {
+  padding: 2px 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 3px;
+}
+
+.job-detail-log .log-line + .log-line {
+  margin-top: 1px;
+}
+
+.job-detail-log .log-time {
+  display: inline-block;
+  color: #64748b;
+  font-size: 0.72rem;
+  margin-inline-end: 8px;
+  min-width: 60px;
+  user-select: none;
+}
+
+.job-detail-log .log-info { color: #94a3b8; }
+.job-detail-log .log-success { color: #4ade80; }
+.job-detail-log .log-warn { color: #fbbf24; background: rgba(251, 191, 36, 0.05); }
+.job-detail-log .log-error { color: #f87171; background: rgba(248, 113, 113, 0.08); }
+
+.job-detail-loading {
+  text-align: center;
+  padding: 2rem;
+}
+
+/* ================================================================
+   Progress Modal — Smart auto-scroll + jump button
+   ================================================================ */
+.progress-log-wrap {
+  position: relative;
+}
+
+.progress-jump-btn {
+  position: absolute;
+  bottom: 12px;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-lg);
+  z-index: 10;
+  transition: all 0.2s var(--ease);
+  font-family: inherit;
+}
+
+[dir="rtl"] .progress-jump-btn {
+  transform: translateX(50%);
+}
+
+.progress-jump-btn:hover {
+  background: var(--accent-hover);
+  transform: translateX(-50%) translateY(-2px);
+}
+
+[dir="rtl"] .progress-jump-btn:hover {
+  transform: translateX(50%) translateY(-2px);
+}
+
+.progress-jump-btn[hidden] {
+  display: none;
+}
+
+/* Mobile: تكبير الـ jump button */
+@media (max-width: 640px) {
+  .progress-jump-btn {
+    padding: 10px 18px;
+    font-size: 0.9rem;
+  }
+  .job-detail-log {
+    font-size: 0.76rem;
+    padding: 0.5rem;
+  }
+}

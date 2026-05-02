@@ -965,8 +965,24 @@ def api_scrape_stream(job_id):
 @app.route("/api/history", methods=["GET"])
 @login_required
 def api_history():
+    # نخفي messages الكاملة من القائمة لتقليل حجم الـ payload
+    # (تُجلب عبر /api/history/<uid>/detail)
     runs = db.list_jobs(current_user.id, limit=50)
+    for r in runs:
+        r.pop("messages", None)
+        r.pop("messages_json", None)
     return jsonify({"runs": runs})
+
+
+@app.route("/api/history/<job_uid>/detail", methods=["GET"])
+@login_required
+def api_history_detail(job_uid):
+    """يرجع تفاصيل run واحد مع كامل الـ messages"""
+    job = db.get_job_by_uid(job_uid)
+    if not job or job.get("user_id") != current_user.id:
+        return jsonify({"error": "not_found"}), 404
+    job.pop("messages_json", None)
+    return jsonify({"run": job})
 
 
 @app.route("/api/history", methods=["DELETE"])

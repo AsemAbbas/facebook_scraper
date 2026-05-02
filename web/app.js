@@ -2644,7 +2644,10 @@ function openProgressModal(jobId) {
           <span id="progCount">0/0</span>
         </div>
       </div>
-      <div class="progress-log" id="progLog"></div>
+      <div class="progress-log-wrap">
+        <div class="progress-log" id="progLog"></div>
+        <button class="progress-jump-btn" id="progJumpBtn" type="button" hidden>↓ النزول للأسفل</button>
+      </div>
       <div class="progress-footer" id="progFooter" hidden>
         <button class="btn-trigger btn-full" id="progDoneBtn">✓ تم · عرض النتائج</button>
       </div>
@@ -2653,6 +2656,34 @@ function openProgressModal(jobId) {
 
   const evtSource = new EventSource(`/api/scrape/${jobId}/stream`);
   const log = document.getElementById('progLog');
+  const jumpBtn = document.getElementById('progJumpBtn');
+
+  // ----- Smart auto-scroll -----
+  // الفكرة: ما نُجبر التمرير لأسفل لو المستخدم scrolled لأعلى ليقرأ.
+  // نعتبر "في الأسفل" لو المسافة من الأسفل أقل من 50px.
+  // لو المستخدم scrolled لأعلى، نُظهر زر "النزول للأسفل".
+  let userScrolledUp = false;
+  const isAtBottom = () => {
+    if (!log) return true;
+    return log.scrollHeight - log.scrollTop - log.clientHeight < 50;
+  };
+  const scrollToBottom = () => {
+    if (log) log.scrollTop = log.scrollHeight;
+  };
+  if (log) {
+    log.addEventListener('scroll', () => {
+      const atBottom = isAtBottom();
+      userScrolledUp = !atBottom;
+      if (jumpBtn) jumpBtn.hidden = atBottom;
+    });
+  }
+  if (jumpBtn) {
+    jumpBtn.addEventListener('click', () => {
+      userScrolledUp = false;
+      scrollToBottom();
+      jumpBtn.hidden = true;
+    });
+  }
 
   evtSource.onmessage = async (evt) => {
     try {
@@ -2672,6 +2703,9 @@ function openProgressModal(jobId) {
         else if (data.status === 'error') statusEl.innerHTML = '⚠️ انتهى مع أخطاء';
       }
 
+      // فحص الموضع قبل ما نضيف الرسائل (عشان نعرف هل auto-scroll مناسب)
+      const wasAtBottom = isAtBottom();
+
       (data.new_messages || []).forEach(m => {
         if (!log) return;
         const line = document.createElement('div');
@@ -2679,7 +2713,14 @@ function openProgressModal(jobId) {
         line.textContent = m.text;
         log.appendChild(line);
       });
-      if (log) log.scrollTop = log.scrollHeight;
+
+      // auto-scroll فقط لو المستخدم في الأسفل أصلاً (يعني يتابع آخر السطور)
+      // لو scrolled لأعلى ليقرأ، نُبقي مكانه ونُظهر زر النزول
+      if (log && wasAtBottom && !userScrolledUp) {
+        scrollToBottom();
+      } else if (jumpBtn && !wasAtBottom) {
+        jumpBtn.hidden = false;
+      }
 
       if (data.status === 'success' || data.status === 'error') {
         evtSource.close();
@@ -2872,6 +2913,15 @@ function renderBackendHistory(active, history) {
     });
   });
 
+  // زر "📋 التفاصيل" — يفتح modal بسجل الرسائل التفصيلي
+  document.querySelectorAll('.run-detail-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const uid = btn.dataset.jobUid;
+      if (uid) showJobDetailModal(uid);
+    });
+  });
+
   // Per-row delete in history
   document.querySelectorAll('.run-delete-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -2964,11 +3014,145 @@ function renderBackendRunRow(r, isActive) {
         ${params.slug ? `· صفحة: <code>${escapeHtml(params.slug)}</code>` : ''}
       </div>
       <div class="run-row-actions">
-        ${isActive ? '<span class="run-link">عرض التقدم ↑</span>' : ''}
+        ${isActive
+          ? '<span class="run-link">عرض التقدم ↑</span>'
+          : (jobUid ? `<button class="btn-refresh btn-sm run-detail-btn" data-job-uid="${escapeHtml(jobUid)}" type="button" title="عرض السجل التفصيلي" onclick="event.stopPropagation()">📋 التفاصيل</button>` : '')
+        }
         ${!isActive && jobUid ? `<button class="btn-icon-sm btn-danger run-delete-btn" data-job-uid="${escapeHtml(jobUid)}" type="button" title="حذف هذا السجل" onclick="event.stopPropagation()">×</button>` : ''}
       </div>
     </div>
   `;
+}
+
+// ====================================================================
+// Job Detail Modal — يعرض الرسائل التفصيلية لعملية سحب منتهية
+// ====================================================================
+
+async function showJobDetailModal(jobUid) {
+  if (!jobUid) return;
+  // فتح modal بحالة loading
+  openModal('📋 تفاصيل العملية', `
+    <div class="job-detail-loading">
+      <div class="spinner"></div>
+      <p>جاري تحميل السجل…</p>
+    </div>
+  `, 'lg');
+
+  let job = null;
+  try {
+    const res = await fetch(`/api/history/${encodeURIComponent(jobUid)}/detail`,
+                            { credentials: 'include' });
+    if (!res.ok) {
+      els.modalBody.innerHTML = `<p class="note">فشل التحميل: HTTP ${res.status}</p>`;
+      return;
+    }
+    const data = await res.json();
+    job = data.run;
+  } catch (e) {
+    els.modalBody.innerHTML = `<p class="note">فشل: ${escapeHtml(e.message)}</p>`;
+    return;
+  }
+  if (!job) {
+    els.modalBody.innerHTML = '<p class="note">لم يتم العثور على هذه العملية.</p>';
+    return;
+  }
+
+  const messages = Array.isArray(job.messages) ? job.messages : [];
+  const statusMap = {
+    queued: { label: '⏳ في الطابور', color: 'warn' },
+    running: { label: '🔄 قيد التشغيل', color: 'warn' },
+    success: { label: '✅ نجح', color: 'success' },
+    error: { label: '❌ فشل', color: 'error' },
+  };
+  const s = statusMap[job.status] || { label: job.status, color: 'muted' };
+  const params = job.params || {};
+  const sources = job.sources_used || [];
+
+  // تحضير سطور الـ log
+  const logLines = messages.map(m => {
+    const lvl = m.level || 'info';
+    const txt = (m.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const ts = m.time || m.t;  // tolerate both field names
+    const tStr = ts ? formatTimeShort(ts) : '';
+    return `<div class="log-line log-${lvl}"><span class="log-time">${tStr}</span>${txt}</div>`;
+  }).join('');
+
+  els.modalBody.innerHTML = `
+    <div class="job-detail">
+      <div class="job-detail-meta">
+        <div class="meta-row">
+          <span class="run-status ${s.color}">${s.label}</span>
+          <span class="run-trigger">${job.trigger_source === 'schedule' ? '⏰ مجدول' : '👤 يدوي'}</span>
+          <span class="run-time">${formatRelTime(job.started_at)}</span>
+        </div>
+        <div class="meta-row">
+          <span><strong>${formatNum(job.new_posts || 0)}</strong> منشور جديد</span>
+          <span>·</span>
+          <span>${job.pages_success || 0}/${job.pages_total || 0} صفحة</span>
+          <span>·</span>
+          <span>⏱️ ${formatDuration(job.duration_seconds || 0)}</span>
+          ${sources.length ? `<span>·</span><span>المصادر: ${sources.join(', ')}</span>` : ''}
+        </div>
+        ${params && Object.keys(params).length ? `
+          <div class="meta-row meta-params">
+            ${params.date_from ? `<span>📅 من: <code>${escapeHtml(params.date_from)}</code></span>` : ''}
+            ${params.date_to ? `<span>إلى: <code>${escapeHtml(params.date_to)}</code></span>` : ''}
+            ${params.slug ? `<span>صفحة: <code>${escapeHtml(params.slug)}</code></span>` : ''}
+            ${Array.isArray(params.slugs) && params.slugs.length ? `<span>${params.slugs.length} صفحة محددة</span>` : ''}
+          </div>
+        ` : ''}
+      </div>
+
+      <div class="job-detail-toolbar">
+        <strong>📜 سجل الرسائل (${messages.length})</strong>
+        <div class="job-detail-tools">
+          <button class="btn-refresh btn-sm" id="copyLogBtn" type="button">📋 نسخ السجل</button>
+          <button class="btn-refresh btn-sm" id="downloadLogBtn" type="button">⬇️ تحميل</button>
+        </div>
+      </div>
+
+      <div class="job-detail-log" id="jobDetailLog">
+        ${messages.length ? logLines : '<p class="note">لا توجد رسائل محفوظة لهذه العملية.</p>'}
+      </div>
+    </div>
+  `;
+
+  // زر النسخ
+  document.getElementById('copyLogBtn')?.addEventListener('click', async () => {
+    const text = messages.map(m => `[${m.level || 'info'}] ${m.text || ''}`).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('✅ تم نسخ السجل', 'success');
+    } catch {
+      showToast('فشل النسخ', 'error');
+    }
+  });
+  // زر التحميل
+  document.getElementById('downloadLogBtn')?.addEventListener('click', () => {
+    const text = messages.map(m => {
+      const ts = m.time || m.t;
+      const tStr = ts ? new Date(ts).toLocaleString() : '';
+      return `${tStr} [${m.level || 'info'}] ${m.text || ''}`;
+    }).join('\n');
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `marsad-log-${jobUid}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+}
+
+// helper: time HH:MM:SS من ISO أو ms timestamp
+function formatTimeShort(t) {
+  try {
+    const d = (typeof t === 'number') ? new Date(t)
+            : (typeof t === 'string') ? new Date(t)
+            : null;
+    if (!d || isNaN(d)) return '';
+    return d.toTimeString().slice(0, 8);  // HH:MM:SS
+  } catch { return ''; }
 }
 
 function renderHistory(githubRuns, token, info) {
