@@ -7814,6 +7814,28 @@ body.exporting-pdf .analytics-stamp { display: block !important; }
 }
 
 /* ================================================================
+   Category badge — تصنيف آلي للمنشور
+   ================================================================ */
+.category-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+  color: #4338ca;
+  border: 1px solid #c7d2fe;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.category-badge:hover {
+  background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+}
+
+/* ================================================================
    Mobile horizontal-scroll guard
    --------------------------------------------------------------
    حل شامل لمنع السكرول الجانبي على الموبايل. يمنع:

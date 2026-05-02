@@ -431,10 +431,30 @@ async function loadAllPages() {
       renderPageFilter();
     }
 
+    populateCategoryFilter();
     updateStats();
   } catch (e) {
     console.error('loadAllPages failed', e);
     STATE.allPosts = [];
+  }
+}
+
+// يملأ dropdown فلتر التصنيف من المنشورات المحملة
+function populateCategoryFilter() {
+  const sel = document.getElementById('filterCategory');
+  if (!sel) return;
+  const counts = {};
+  (STATE.allPosts || []).forEach(p => {
+    const c = (p.category || '').trim();
+    if (c) counts[c] = (counts[c] || 0) + 1;
+  });
+  const cats = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  const current = sel.value;
+  sel.innerHTML = '<option value="">كل التصنيفات</option>'
+    + cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)} (${counts[c]})</option>`).join('');
+  // إعادة الاختيار السابق لو موجود
+  if (current && cats.includes(current)) {
+    sel.value = current;
   }
 }
 
@@ -607,6 +627,13 @@ function applyFilters() {
   // Multi-select: sources
   if (STATE.multiSelect.source.size > 0) {
     posts = posts.filter(p => STATE.multiSelect.source.has(p.source));
+    activeFilters++;
+  }
+
+  // Category filter (تصنيف آلي)
+  const catEl = document.getElementById('filterCategory');
+  if (catEl && catEl.value) {
+    posts = posts.filter(p => p.category === catEl.value);
     activeFilters++;
   }
 
@@ -1362,7 +1389,7 @@ function renderPostCard(post, i) {
           <div class="post-page">${escapeHtml(post.page_name)}</div>
           <div class="post-time">${formatTime(post.timestamp_text, post.published_at || post.scraped_at)}</div>
         </div>
-        <div class="post-meta-row">${typeBadge}${sourceBadge}</div>
+        <div class="post-meta-row">${typeBadge}${sourceBadge}${categoryBadge(post.category)}</div>
         <div class="post-text">${escapeHtml(post.text || '')}</div>
         <div class="post-engagement">
           ${hasEngagement ? `
@@ -1403,6 +1430,7 @@ function renderPostListRow(post, i) {
           <span class="list-time">${formatTime(post.timestamp_text, post.published_at || post.scraped_at)}</span>
           ${typeBadge}
           ${sourceBadge}
+          ${categoryBadge(post.category)}
         </div>
         <div class="list-text">${escapeHtml((post.text || '').slice(0, 220))}${(post.text || '').length > 220 ? '…' : ''}</div>
         <div class="list-engagement">
@@ -1460,6 +1488,14 @@ function renderSourceBadge(source) {
   const b = badges[source];
   if (!b) return '';
   return `<span class="source-badge ${b.className}" title="المصدر: ${b.label}">${b.icon} ${b.label}</span>`;
+}
+
+// Category badge — يعرض التصنيف الآلي (من OpenAI) كـ chip ملوّن
+function categoryBadge(category) {
+  if (!category || typeof category !== 'string') return '';
+  const cat = category.trim();
+  if (!cat) return '';
+  return `<span class="category-badge" title="التصنيف الآلي">🏷️ ${escapeHtml(cat)}</span>`;
 }
 
 function showEmpty(msg) {
@@ -1818,9 +1854,18 @@ function closeModal() {
 // ========= Export CSV =========
 
 // ==================== Posts Export (advanced) ====================
+// Helper: get followers count for a page slug from STATE.pagesConfig
+function _getPageFollowers(slug) {
+  if (!slug) return 0;
+  const pg = (STATE.pagesConfig || []).find(p => p.slug === slug);
+  return pg ? (parseInt(pg.followers) || 0) : 0;
+}
+
 const EXPORT_FIELDS = [
   { id: 'page_name',           label: 'اسم الصفحة',     get: p => p.page_name || '' },
   { id: 'page_slug',           label: 'كود الصفحة (slug)', get: p => p.page_slug || '', off: true },
+  { id: 'page_followers',      label: 'عدد متابعين الصفحة', get: p => _getPageFollowers(p.page_slug), off: true },
+  { id: 'category',            label: 'التصنيف',        get: p => p.category || '' },
   { id: 'text',                label: 'النص',           get: p => p.text || '' },
   { id: 'post_type',           label: 'نوع المنشور',     get: p => p.post_type || 'text' },
   { id: 'reactions',           label: 'تفاعلات',        get: p => p.reactions || 0 },
@@ -6344,6 +6389,8 @@ function setupListeners() {
   els.minReactions.addEventListener('input', debounce(applyFilters, 300));
   els.maxReactions?.addEventListener('input', debounce(applyFilters, 300));
   els.minComments.addEventListener('input', debounce(applyFilters, 300));
+  // category filter
+  document.getElementById('filterCategory')?.addEventListener('change', applyFilters);
   // quick filter checkboxes are inside the multiselect — listeners attached there
   els.resetFilters.addEventListener('click', resetAllFilters);
 

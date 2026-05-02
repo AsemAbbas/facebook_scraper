@@ -59,6 +59,7 @@ import auth as auth_module
 from scrapers.base import UnifiedPost
 from scrapers.apify_source import ApifySource
 from scrapers.rss_source import RSSSource
+from classifier import classify_posts, ClassifierError
 
 
 # ======================================================================
@@ -114,6 +115,17 @@ SOURCE_META = {
         "token_help": "إذا كانت الصفحة فيها رابط RSS feed، ضعه في حقل 'رابط الصفحة' وسنقرأ منه مباشرة.",
         "signup_url": "",
         "token_url": "",
+    },
+    "openai_classifier": {
+        "icon": "🤖", "label": "تصنيف آلي (OpenAI)",
+        "description": "تصنيف منشورات تلقائي ضمن 36 فئة عبر GPT",
+        "price": "حسب OpenAI (~$0.01 لكل 100 منشور بـ gpt-4o-mini)",
+        "needs_token": True,
+        "token_label": "OpenAI API Key",
+        "token_help": "من platform.openai.com → API keys (يبدأ بـ sk-)",
+        "signup_url": "https://platform.openai.com/signup",
+        "token_url": "https://platform.openai.com/api-keys",
+        "is_classifier": True,    # علامة للواجهة: ليس scraper
     },
 }
 
@@ -229,6 +241,7 @@ def _build_no_posts_msg(source_name: str, scraper,
 def _build_user_sources(user_id: int) -> dict:
     """
     يبني dict { source_name: instance } للمصادر المفعّلة لهذا المستخدم.
+    openai_classifier ليس scraper — يُتعامل معه بشكل منفصل (انظر _run_classification).
     """
     user_sources = db.list_sources(user_id)
     out: dict = {}
@@ -249,6 +262,76 @@ def _build_user_sources(user_id: int) -> dict:
             full_conf["token"] = tok
         out[s["source_name"]] = cls(full_conf)
     return out
+
+
+def _run_classification(user_id: int, page_slug: Optional[str], push_msg, cancel_check=None) -> int:
+    """
+    يصنّف منشورات بدون category للمستخدم (لصفحة معيّنة أو الكل).
+    يستعمل OpenAI لو الـ source مفعّل وفيه token.
+    يرجع عدد المنشورات اللي اتصنفت بنجاح.
+    """
+    try:
+        cfg = db.get_source_with_token(user_id, "openai_classifier")
+    except Exception:
+        return 0
+    if not cfg or not cfg.get("enabled"):
+        return 0
+    token = cfg.get("token", "")
+    if not token:
+        return 0
+
+    conf = cfg.get("config") or {}
+    if not conf.get("auto_classify", True):
+        return 0
+    model = conf.get("model", "gpt-4o")
+    batch_size = int(conf.get("batch_size", 20))
+
+    # نجلب المنشورات بدون category — حد 200 لتجنب تكلفة هائلة
+    try:
+        pending = db.get_posts_without_category(user_id, page_slug=page_slug, limit=200)
+    except Exception as e:
+        push_msg("warn", f"  ⚠️ تصنيف: فشل جلب المنشورات: {e}")
+        return 0
+
+    if not pending:
+        return 0
+
+    push_msg("info", f"  🏷️ بدء التصنيف الآلي لـ {len(pending)} منشور (model={model})…")
+
+    # نمرّر للـ classifier {id: db_id, text}
+    posts_for_api = [
+        {"id": str(p["id"]), "text": p.get("text", "") or ""}
+        for p in pending
+    ]
+    try:
+        results = classify_posts(
+            posts_for_api,
+            openai_token=token,
+            model=model,
+            batch_size=batch_size,
+            cancel_callback=cancel_check,
+        )
+    except ClassifierError as e:
+        push_msg("error", f"  ❌ تصنيف: {str(e)[:200]}")
+        return 0
+    except Exception as e:
+        push_msg("error", f"  ❌ تصنيف خطأ: {str(e)[:200]}")
+        return 0
+
+    # نرجع map: db_id → category
+    id_to_cat = {int(r["id"]): r["category"] for r in results if r.get("category")}
+    if not id_to_cat:
+        push_msg("warn", "  ⚠️ تصنيف: لم يُصنَّف أي منشور")
+        return 0
+
+    try:
+        n = db.update_post_categories(user_id, id_to_cat)
+    except Exception as e:
+        push_msg("error", f"  ❌ تصنيف: فشل التحديث في DB: {e}")
+        return 0
+
+    push_msg("success", f"  🏷️ تم تصنيف {n} منشور بنجاح")
+    return n
 
 
 # Job tracking (in-memory for real-time progress; DB for persistent history)
@@ -415,12 +498,65 @@ def api_posts_list():
         date_from=args.get("date_from") or None,
         date_to=args.get("date_to") or None,
         search=args.get("search") or None,
+        category=args.get("category") or None,
         limit=min(1000, int(args.get("limit", 500) or 500)),
         offset=int(args.get("offset", 0) or 0),
         order_by=args.get("order_by", "newest"),
     )
     total = db.count_posts(current_user.id, page_slug=args.get("page") or None)
     return jsonify({"posts": posts, "total": total})
+
+
+@app.route("/api/categories", methods=["GET"])
+@login_required
+def api_categories():
+    """يرجع قائمة التصنيفات المُستعملة + عداد كل تصنيف."""
+    from classifier import CATEGORIES as ALL_CATS
+    used = db.list_categories_for_user(current_user.id)
+    return jsonify({"used": used, "all": ALL_CATS})
+
+
+@app.route("/api/posts/classify", methods=["POST"])
+@login_required
+def api_posts_classify():
+    """
+    يصنّف المنشورات بدون category للمستخدم الحالي (backfill يدوي).
+    يقبل JSON: {"page_slug": "..." (optional), "limit": N (default 200)}
+    """
+    data = request.get_json(silent=True) or {}
+    page_slug = data.get("page_slug") or None
+    limit = max(1, min(500, int(data.get("limit") or 200)))
+
+    cfg = db.get_source_with_token(current_user.id, "openai_classifier")
+    if not cfg or not cfg.get("enabled"):
+        return jsonify({"error": "التصنيف الآلي غير مفعّل — افتح الإعدادات"}), 400
+    token = cfg.get("token", "")
+    if not token:
+        return jsonify({"error": "OpenAI API key غير محدد"}), 400
+
+    pending = db.get_posts_without_category(current_user.id,
+                                            page_slug=page_slug, limit=limit)
+    if not pending:
+        return jsonify({"ok": True, "classified": 0, "message": "لا توجد منشورات تحتاج تصنيف"})
+
+    conf = cfg.get("config") or {}
+    posts_for_api = [
+        {"id": str(p["id"]), "text": p.get("text", "") or ""}
+        for p in pending
+    ]
+    try:
+        results = classify_posts(
+            posts_for_api,
+            openai_token=token,
+            model=conf.get("model", "gpt-4o"),
+            batch_size=int(conf.get("batch_size", 20)),
+        )
+    except ClassifierError as e:
+        return jsonify({"error": str(e)}), 500
+
+    id_to_cat = {int(r["id"]): r["category"] for r in results if r.get("category")}
+    n = db.update_post_categories(current_user.id, id_to_cat) if id_to_cat else 0
+    return jsonify({"ok": True, "classified": n, "total_pending": len(pending)})
 
 
 @app.route("/api/posts/<int:post_id>", methods=["DELETE"])
@@ -612,7 +748,9 @@ def api_sources_list():
 @app.route("/api/sources/<name>", methods=["PATCH"])
 @login_required
 def api_source_update(name):
-    if name not in SOURCE_REGISTRY:
+    # نسمح بـ scrapers (SOURCE_REGISTRY) + classifier (SOURCE_META) — كلاهما
+    # يُحفظ في source_settings table بنفس الطريقة
+    if name not in SOURCE_REGISTRY and name not in SOURCE_META:
         return jsonify({"error": "مصدر غير معروف"}), 404
     data = request.get_json(silent=True) or {}
     updates = {}
@@ -865,6 +1003,13 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
                     total_new += new_n
                     success_count += 1
                     sources_used.add(chosen)
+
+                    # تصنيف آلي للمنشورات الجديدة (لو OpenAI مفعّل)
+                    if new_n > 0 and not _check_cancel():
+                        try:
+                            _run_classification(user_id, page["slug"], push_msg, _check_cancel)
+                        except Exception as e:
+                            push_msg("warn", f"  ⚠️ تصنيف: {str(e)[:120]}")
                 else:
                     push_msg("warn", _build_no_posts_msg(chosen, src, page_df, page_dt))
             except Exception as e:
@@ -1471,6 +1616,13 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
                     total_new += new_n
                     success_count += 1
                     sources_used.add(chosen)
+
+                    # تصنيف آلي للمنشورات الجديدة (لو OpenAI مفعّل)
+                    if new_n > 0 and not _check_cancel():
+                        try:
+                            _run_classification(user_id, page["slug"], push_msg, _check_cancel)
+                        except Exception as e:
+                            push_msg("warn", f"  ⚠️ تصنيف: {str(e)[:120]}")
                 else:
                     push_msg("warn", _build_no_posts_msg(chosen, src, date_from, date_to))
             except Exception as e:

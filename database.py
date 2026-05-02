@@ -246,11 +246,13 @@ SCHEMA_STATEMENTS = [
         shares          INT DEFAULT 0,
         source          VARCHAR(32),
         post_type       VARCHAR(32),
+        category        VARCHAR(64) NOT NULL DEFAULT '',
         raw_json        LONGTEXT,
         UNIQUE KEY uniq_user_page_post (user_id, page_slug, post_id(190)),
         KEY idx_user_page (user_id, page_slug),
         KEY idx_published (published_at),
         KEY idx_scraped (scraped_at),
+        KEY idx_category (user_id, category),
         CONSTRAINT fk_posts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
@@ -362,6 +364,16 @@ DEFAULT_SOURCES = [
             "timeout_seconds": 30,
         },
     },
+    {
+        "source_name": "openai_classifier",
+        "enabled": 0,    # معطّل افتراضياً — يحتاج OpenAI API key
+        "priority": 99,
+        "config": {
+            "model": "gpt-4o",
+            "auto_classify": True,    # يصنّف تلقائياً بعد كل سحب
+            "batch_size": 20,
+        },
+    },
 ]
 
 # مصادر قديمة تم إلغاؤها — نحذفها من DB لو موجودة
@@ -407,6 +419,34 @@ def init_db() -> None:
         _migrate_normalize_columns()
     except Exception as e:
         print(f"[db] normalize columns migration skipped: {e}")
+
+    # Migration: إضافة category للـ posts (للتصنيف الآلي عبر OpenAI)
+    try:
+        _migrate_add_category_column()
+    except Exception as e:
+        print(f"[db] category migration skipped: {e}")
+
+
+def _migrate_add_category_column() -> None:
+    """يضيف عمود category لـ posts لو غير موجود + index."""
+    with db_cursor() as cur:
+        cur.execute("""
+            SELECT COUNT(*) AS n FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = 'posts' AND column_name = 'category'
+        """)
+        row = cur.fetchone() or {}
+        has_col = (row.get("n") if isinstance(row, dict) else row[0]) > 0
+        if not has_col:
+            print("[db] adding posts.category column...")
+            cur.execute("""
+                ALTER TABLE posts
+                ADD COLUMN category VARCHAR(64) NOT NULL DEFAULT '' AFTER post_type
+            """)
+            try:
+                cur.execute("CREATE INDEX idx_category ON posts (user_id, category)")
+            except Exception:
+                pass
 
 
 def _migrate_normalize_columns() -> None:
@@ -1088,6 +1128,73 @@ def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> dict:
     }
 
 
+def get_posts_without_category(user_id: int, page_slug: Optional[str] = None,
+                               limit: int = 100) -> list[dict]:
+    """
+    يرجع منشورات بدون category (category='' أو NULL) لتصنيفها.
+    يُستعمل بعد scrape (للجدد) أو يدوياً للـ backfill.
+    يرجع: [{"id": db_id, "post_id": ..., "text": ...}]
+    """
+    sql = """
+        SELECT id, post_id, text FROM posts
+        WHERE user_id = %s
+          AND (category IS NULL OR category = '')
+          AND text IS NOT NULL AND text != ''
+    """
+    args = [user_id]
+    if page_slug:
+        sql += " AND page_slug = %s"
+        args.append(page_slug)
+    sql += " ORDER BY scraped_at DESC LIMIT %s"
+    args.append(limit)
+
+    with db_cursor() as cur:
+        cur.execute(sql, args)
+        return [dict(r) for r in cur.fetchall() or []]
+
+
+def update_post_categories(user_id: int, id_to_category: dict) -> int:
+    """
+    تحديث category لمنشورات متعددة دفعة واحدة.
+    id_to_category: {db_id: "category_name", ...}
+    يرجع عدد الـ rows اللي تم تحديثها فعلياً.
+    """
+    if not id_to_category:
+        return 0
+    updated = 0
+    with db_cursor() as cur:
+        for pid, cat in id_to_category.items():
+            if not cat:
+                continue
+            try:
+                cur.execute(
+                    "UPDATE posts SET category = %s WHERE id = %s AND user_id = %s",
+                    (str(cat)[:64], int(pid), user_id),
+                )
+                updated += cur.rowcount
+            except Exception:
+                continue
+    return updated
+
+
+def list_categories_for_user(user_id: int) -> list[dict]:
+    """
+    يرجع قائمة التصنيفات المستعملة وعداد كل واحد للمستخدم.
+    """
+    with db_cursor() as cur:
+        cur.execute("""
+            SELECT category, COUNT(*) AS cnt FROM posts
+            WHERE user_id = %s AND category IS NOT NULL AND category != ''
+            GROUP BY category
+            ORDER BY cnt DESC
+        """, (user_id,))
+        return [
+            {"category": r["category"] if isinstance(r, dict) else r[0],
+             "count": int(r["cnt"] if isinstance(r, dict) else r[1])}
+            for r in cur.fetchall() or []
+        ]
+
+
 def list_posts(
     user_id: int,
     page_slug: Optional[str] = None,
@@ -1097,6 +1204,7 @@ def list_posts(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     search: Optional[str] = None,
+    category: Optional[str] = None,
     limit: int = 500,
     offset: int = 0,
     order_by: str = "newest",
@@ -1124,6 +1232,9 @@ def list_posts(
     if search:
         sql += " AND text LIKE %s"
         args.append(f"%{search}%")
+    if category:
+        sql += " AND category = %s"
+        args.append(category)
 
     order_map = {
         "newest": "COALESCE(published_at, scraped_at) DESC",
