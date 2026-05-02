@@ -5704,7 +5704,56 @@ function renderSourceCard(s, priorityIndex) {
         `}
 
         ${s.source_name === 'apify' ? renderApifyExtraConfig(s) : ''}
+        ${s.source_name === 'openai_classifier' ? renderClassifierExtraConfig(s) : ''}
       </div>
+    </div>
+  `;
+}
+
+function renderClassifierExtraConfig(s) {
+  const cfg = s.config || {};
+  const model = cfg.model || 'gpt-4o';
+  const autoClassify = cfg.auto_classify !== false;
+  const batchSize = cfg.batch_size || 20;
+  return `
+    <div class="form-field source-extra-config">
+      <label>الموديل</label>
+      <select class="select classifier-model-select" data-source="${s.source_name}">
+        <option value="gpt-4o" ${model === 'gpt-4o' ? 'selected' : ''}>gpt-4o (الأدق - أعلى تكلفة)</option>
+        <option value="gpt-4o-mini" ${model === 'gpt-4o-mini' ? 'selected' : ''}>gpt-4o-mini (أرخص ~95%)</option>
+        <option value="gpt-4-turbo" ${model === 'gpt-4-turbo' ? 'selected' : ''}>gpt-4-turbo</option>
+        <option value="gpt-3.5-turbo" ${model === 'gpt-3.5-turbo' ? 'selected' : ''}>gpt-3.5-turbo (أرخص لكن أقل دقة)</option>
+      </select>
+      <span class="field-help">
+        الموديل المُستخدم لتصنيف المنشورات.
+        <strong>gpt-4o-mini</strong> يوصى به: تكلفة منخفضة جداً مع نتائج جيدة.
+      </span>
+    </div>
+    <div class="form-field source-extra-config">
+      <label class="switch-row">
+        <input type="checkbox" class="classifier-auto-toggle" ${autoClassify ? 'checked' : ''}>
+        <span>تصنيف تلقائي بعد كل سحب</span>
+      </label>
+      <span class="field-help">
+        لو معطّل، يمكنك تشغيل التصنيف يدوياً من زر
+        "تصنيف المنشورات القديمة" أدناه.
+      </span>
+    </div>
+    <div class="form-field source-extra-config">
+      <label>حجم الدفعة (batch size)</label>
+      <input type="number" class="input classifier-batch-input"
+             value="${batchSize}" min="1" max="50" style="max-width:120px">
+      <span class="field-help">
+        عدد المنشورات لكل API call (افتراضي 20). أقل = استجابة أبطأ، أكثر = ممكن tokens limit.
+      </span>
+    </div>
+    <div class="form-field source-extra-config">
+      <button class="btn-trigger classifier-backfill-btn" type="button">
+        🏷️ تصنيف المنشورات القديمة
+      </button>
+      <span class="field-help">
+        يصنّف المنشورات الموجودة بدون تصنيف (حتى 200 منشور في المرة الواحدة).
+      </span>
     </div>
   `;
 }
@@ -5787,6 +5836,71 @@ function bindSourceCards() {
   });
 
   // Apify actor_id مقفول في الكود - لا يمكن تغييره من الـ UI
+
+  // === OpenAI Classifier — model + auto_classify + batch_size ===
+  const classifierSaveConfig = async (card) => {
+    const modelSel = card.querySelector('.classifier-model-select');
+    const autoToggle = card.querySelector('.classifier-auto-toggle');
+    const batchInput = card.querySelector('.classifier-batch-input');
+    if (!modelSel) return;
+    const cfg = {
+      model: modelSel.value || 'gpt-4o',
+      auto_classify: autoToggle ? autoToggle.checked : true,
+      batch_size: batchInput ? Math.max(1, Math.min(50, parseInt(batchInput.value) || 20)) : 20,
+    };
+    try {
+      const res = await fetch('/api/sources/openai_classifier', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ config: cfg }),
+      });
+      if (res.ok) showToast('✅ تم حفظ الإعدادات', 'success');
+    } catch (e) {
+      showToast('فشل الحفظ: ' + e.message, 'error');
+    }
+  };
+
+  list.querySelectorAll('.classifier-model-select').forEach(sel => {
+    sel.addEventListener('change', () => classifierSaveConfig(sel.closest('.source-config-card')));
+  });
+  list.querySelectorAll('.classifier-auto-toggle').forEach(t => {
+    t.addEventListener('change', () => classifierSaveConfig(t.closest('.source-config-card')));
+  });
+  list.querySelectorAll('.classifier-batch-input').forEach(inp => {
+    inp.addEventListener('change', () => classifierSaveConfig(inp.closest('.source-config-card')));
+  });
+
+  // === Backfill: تصنيف يدوي للمنشورات القديمة ===
+  list.querySelectorAll('.classifier-backfill-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('هل تريد تصنيف المنشورات القديمة بدون تصنيف الآن؟\n(حتى 200 منشور — قد يستغرق دقيقة أو دقيقتين)')) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '⏳ جارٍ التصنيف…';
+      try {
+        const res = await fetch('/api/posts/classify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ limit: 200 }),
+        });
+        const d = await res.json();
+        if (res.ok) {
+          showToast(`✅ تم تصنيف ${d.classified || 0} منشور`, 'success');
+          // أعد تحميل المنشورات لإظهار التصنيفات الجديدة
+          await loadAllPages();
+          applyFilters();
+        } else {
+          showToast(d.error || 'فشل التصنيف', 'error');
+        }
+      } catch (e) {
+        showToast('خطأ: ' + e.message, 'error');
+      }
+      btn.disabled = false;
+      btn.textContent = orig;
+    });
+  });
 
   // === Collapse/Expand toggle ===
   list.querySelectorAll('.source-config-card').forEach(card => {
