@@ -943,17 +943,20 @@ def _global_url_fingerprint(post_url: str) -> str:
     return "g:" + hashlib.sha1(canon.encode("utf-8")).hexdigest()[:32]
 
 
-def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> int:
+def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> dict:
     """
-    يرجع عدد المنشورات الجديدة.
+    يدخل المنشورات ويرجع dict: {"new": N, "dup": M, "total": N+M}
     يمنع التكرار على 4 مستويات:
       1. UNIQUE KEY على (user_id, page_slug, post_id) - دفاع DB
       2. cross-page post_id: نفس الـ ID موجود في أي صفحة أخرى للمستخدم → skip
       3. cross-page canonical URL: نفس الرابط (بعد تطبيع) في أي صفحة → skip
       4. within-page text fingerprint: نفس النص على نفس الصفحة → skip
+
+    ملاحظة: التوقيع تغيّر من int إلى dict — الـ callers يجب يستعملوا
+    result["new"] بدل النتيجة المباشرة.
     """
     if not posts:
-        return 0
+        return {"new": 0, "dup": 0, "total": 0}
     new_count = 0
     skipped_dup = 0
 
@@ -1049,9 +1052,16 @@ def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> int:
                     if tfp:
                         seen_texts_batch.add(tfp)
                         existing_texts_for_page.add(tfp)
+                else:
+                    # INSERT IGNORE لم يدخل (UNIQUE conflict) → مكرر على DB level
+                    skipped_dup += 1
             except Exception:
                 continue
-    return new_count
+    return {
+        "new": new_count,
+        "dup": skipped_dup,
+        "total": len(posts),
+    }
 
 
 def list_posts(
@@ -1777,8 +1787,8 @@ def migrate_legacy_data(admin_user_id: int) -> dict:
                 slug = data.get("page_slug", f.stem)
                 posts = data.get("posts", [])
                 if posts:
-                    new_count = insert_posts(admin_user_id, slug, posts)
-                    stats["posts"] += new_count
+                    ins = insert_posts(admin_user_id, slug, posts)
+                    stats["posts"] += ins.get("new", 0) if isinstance(ins, dict) else int(ins or 0)
             except Exception:
                 continue
 

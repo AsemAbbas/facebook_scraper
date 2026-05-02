@@ -18,11 +18,10 @@ Apify Source
 """
 
 import asyncio
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 import aiohttp
-
-from typing import Optional
 
 from .base import BaseScraper, UnifiedPost, SourceUnavailableError, RateLimitError
 from .normalizer import PostNormalizer as N
@@ -221,9 +220,26 @@ class ApifySource(BaseScraper):
         # outputFormat=raw يرجع البيانات الكاملة (attachments مع subattachments
         # nested) عشان نقدر نستخرج كل الصور. الـ "simple" يحذف الـ attachments
         # تماماً للمنشورات الصورية فيخلّيها تظهر كنص بدون ميديا.
+        # Auto-scaling للـ count: لو الفترة المطلوبة بعيدة عن الحاضر،
+        # نحتاج عدد أكبر عشان الـ scraper يصل لها (يبدأ من الأحدث ويتراجع).
+        # كل يوم بعيد = +20 منشور تقريباً (للصفحات النشطة).
+        effective_count = max_posts
+        if date_from:
+            try:
+                df_dt = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
+                if df_dt.tzinfo is None:
+                    df_dt = df_dt.replace(tzinfo=timezone.utc)
+                days_back = (datetime.now(df_dt.tzinfo) - df_dt).days
+                if days_back > 0:
+                    # min: max_posts، نزيد بمقدار days_back * 20، cap عند 500
+                    suggested = max_posts + (days_back * 20)
+                    effective_count = min(max(max_posts, suggested), 500)
+            except Exception:
+                pass
+
         input_data = {
             "urls": [page_url],
-            "count": max_posts,
+            "count": effective_count,
             "outputFormat": "raw",        # raw = بيانات كاملة (مهم لاستخراج الصور)
             "sortType": "new_posts",
             "scrapePhotos": True,         # يستعمل FB photo viewer لجلب صور full-res
@@ -237,12 +253,20 @@ class ApifySource(BaseScraper):
         if isinstance(user_max, int) and user_max >= 10:
             input_data["maxDelay"] = user_max
 
+        # scrapeUntil: حد أدنى — الـ scraper يتوقف عند هذا التاريخ.
+        # نمرر date_from عشان يصل للـ نطاق المطلوب على الأقل.
         if date_from:
-            input_data["scrapeUntil"] = date_from
+            # تأكد من تنسيق ISO date — Apify يقبل "YYYY-MM-DD"
+            input_data["scrapeUntil"] = str(date_from)[:10]
+
         # cookie/proxy اختيارية — نتركها فاضية افتراضياً
         cookie_val = self.config.get("cookie")
         if cookie_val:
             input_data["cookie"] = cookie_val
+
+        # Logging للتشخيص
+        scrape_until = input_data.get("scrapeUntil", "—")
+        print(f"     🛠️  [apify] count={effective_count} scrapeUntil={scrape_until}")
 
         url = f"{APIFY_BASE}/acts/{self.actor_id_url}/runs"
 

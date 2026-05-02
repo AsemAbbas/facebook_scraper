@@ -148,14 +148,21 @@ def _resolve_max_posts(page_value, date_from=None, date_to=None) -> int:
     return 1000   # cap عالي - الفلترة بالتاريخ
 
 
-def _build_no_posts_msg(source_name: str, scraper) -> str:
+def _build_no_posts_msg(source_name: str, scraper,
+                        req_date_from: Optional[str] = None,
+                        req_date_to: Optional[str] = None) -> str:
     """
-    يبني رسالة واضحة للمستخدم عند رجوع 0 منشورات.
-    يقرأ scraper.last_diagnostic لمعرفة السبب الحقيقي:
-      - dataset فاضي فعلاً → "لم يرجع منشورات"
-      - كل البوستات خارج نطاق التاريخ → نخبره بآخر منشور متاح
-      - بوستات قصيرة/غير صالحة → نخبره
+    يبني رسالة ذكية للمستخدم عند رجوع 0 منشورات.
+    يقرأ scraper.last_diagnostic لمعرفة السبب الحقيقي ويقترح حلاً:
+
+    سيناريوهات outside_date:
+      A) كل المنشورات أحدث من date_to → الـ scraper بدأ من اليوم وما وصل
+         للنطاق المطلوب. الحل: زيادة عدد المنشورات.
+      B) كل المنشورات أقدم من date_from → الصفحة ما نشرت في النطاق.
+         الحل: وسّع النطاق.
+      C) ضمن النطاق فعلاً لكن invalid/short → مشكلة في الـ data.
     """
+    from datetime import datetime as _dt
     diag = getattr(scraper, "last_diagnostic", None) or {}
     items_count = diag.get("items_count", 0)
     if items_count == 0:
@@ -166,26 +173,45 @@ def _build_no_posts_msg(source_name: str, scraper) -> str:
     short = diag.get("short", 0)
     exception = diag.get("exception", 0)
 
-    # الحالة الأكثر شيوعاً: كل البوستات خارج النطاق الزمني
+    # فصلنا scenarios outside_date
     if outside == items_count and outside > 0:
-        from datetime import datetime as _dt
         newest_ts = diag.get("newest_ts")
-        df = diag.get("date_from")
-        dt = diag.get("date_to")
-        range_str = f"{df or '—'} → {dt or '—'}"
-        if newest_ts:
-            newest_str = _dt.fromtimestamp(newest_ts).strftime("%Y-%m-%d %H:%M")
+        oldest_ts = diag.get("oldest_ts")
+        df = req_date_from or diag.get("date_from")
+        dt_to = req_date_to or diag.get("date_to")
+        range_str = f"{df or '—'} → {dt_to or '—'}"
+
+        newest_str = _dt.fromtimestamp(newest_ts).strftime("%Y-%m-%d %H:%M") if newest_ts else "—"
+        oldest_str = _dt.fromtimestamp(oldest_ts).strftime("%Y-%m-%d %H:%M") if oldest_ts else "—"
+
+        # هل النطاق المطلوب أقدم من أقدم منشور وصلنا له؟
+        scraper_didnt_reach = False
+        if oldest_ts and df:
+            try:
+                df_dt = _dt.fromisoformat(df.replace("Z", "+00:00"))
+                if df_dt.timestamp() < oldest_ts:
+                    # الـ date_from المطلوب أقدم من أقدم منشور رجع
+                    # = الـ scraper وقف قبل الوصول
+                    scraper_didnt_reach = True
+            except Exception:
+                pass
+
+        if scraper_didnt_reach:
             return (
-                f"  ⚠️  {source_name}: {items_count} منشور موجود لكن جميعها "
-                f"خارج النطاق ({range_str}) — آخر منشور: {newest_str}. "
-                f"وسّع النطاق الزمني للحصول على بيانات."
+                f"  ⚠️  {source_name}: {items_count} منشور رجعت لكن كلها أحدث من نطاقك "
+                f"({range_str}) — وصلنا حتى: {oldest_str} فقط. "
+                f"الصفحة نشطة جداً — زِد 'الحد الأقصى للمنشورات' في إعدادات الصفحة "
+                f"(جرّب 100 أو 200) ليصل الـ scraper للنطاق المطلوب."
             )
+
+        # غير ذلك: الصفحة فعلاً ما عندها منشورات في النطاق
         return (
-            f"  ⚠️  {source_name}: {items_count} منشور خارج النطاق ({range_str}). "
-            f"وسّع النطاق الزمني."
+            f"  ⚠️  {source_name}: {items_count} منشور رجعت كلها خارج النطاق "
+            f"({range_str}) — أحدث: {newest_str}, أقدم: {oldest_str}. "
+            f"الصفحة لم تنشر في الفترة المحددة — وسّع النطاق."
         )
 
-    # حالات أخرى: نخبر المستخدم بالتفصيل
+    # حالات أخرى
     parts = []
     if outside:
         parts.append(f"{outside} خارج النطاق")
@@ -813,14 +839,16 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
                 )
                 if posts_result:
                     posts_dicts = [p.to_dict() for p in posts_result]
-                    new_n = db.insert_posts(user_id, page["slug"], posts_dicts)
+                    ins = db.insert_posts(user_id, page["slug"], posts_dicts)
+                    new_n = ins["new"]
+                    dup_n = ins["dup"]
                     push_msg("success",
-                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد)")
+                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد، {dup_n} مكرر)")
                     total_new += new_n
                     success_count += 1
                     sources_used.add(chosen)
                 else:
-                    push_msg("warn", _build_no_posts_msg(chosen, src))
+                    push_msg("warn", _build_no_posts_msg(chosen, src, page_df, page_dt))
             except Exception as e:
                 push_msg("error", f"  ❌ {chosen}: {str(e)[:120]}")
 
@@ -1339,14 +1367,16 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
                 )
                 if posts_result:
                     posts_dicts = [p.to_dict() for p in posts_result]
-                    new_n = db.insert_posts(user_id, page["slug"], posts_dicts)
+                    ins = db.insert_posts(user_id, page["slug"], posts_dicts)
+                    new_n = ins["new"]
+                    dup_n = ins["dup"]
                     push_msg("success",
-                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد)")
+                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد، {dup_n} مكرر)")
                     total_new += new_n
                     success_count += 1
                     sources_used.add(chosen)
                 else:
-                    push_msg("warn", _build_no_posts_msg(chosen, src))
+                    push_msg("warn", _build_no_posts_msg(chosen, src, date_from, date_to))
             except Exception as e:
                 push_msg("error", f"  ❌ {chosen}: {str(e)[:120]}")
 
