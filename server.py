@@ -676,6 +676,7 @@ def api_scrape_start():
             "messages": [],
             "result": None,
             "params": params,
+            "cancel_requested": False,   # flag للإلغاء — يفحصها الـ thread
         }
     db.create_job(current_user.id, job_uid, params)
 
@@ -801,7 +802,18 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
         sources_used: set = set()
         started = datetime.now(timezone.utc)
 
+        # callback لفحص cancel — يستعمله المصدر داخل polling/loops
+        def _check_cancel():
+            return _is_cancel_requested(job_uid)
+
+        cancelled = False
         for idx, page in enumerate(pages_all):
+            # ⛔ فحص الإلغاء قبل بداية كل صفحة
+            if _check_cancel():
+                cancelled = True
+                push_msg("warn", "🛑 تم إيقاف العملية بناءً على طلب المستخدم")
+                break
+
             update(progress=idx, current_page=page.get("name", ""))
             push_msg("info", f"📌 [{idx + 1}/{len(pages_all)}] {page.get('name', '')}")
 
@@ -823,6 +835,12 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
                 push_msg("warn", f"  ⚠️ المصدر '{chosen}' غير مفعّل - استخدام {fallback_name}")
                 src = source_map[fallback_name]
                 chosen = fallback_name
+
+            # امرر cancel callback للمصدر — apify يستعملها داخل polling
+            try:
+                src.cancel_callback = _check_cancel
+            except Exception:
+                pass
 
             # max_posts: لو الصفحة لها رقم محدد نستخدمه، وإلا (فارغ/0/None)
             # نأخذ كاب عالي ونعتمد على التاريخ للتحديد
@@ -850,13 +868,23 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
                 else:
                     push_msg("warn", _build_no_posts_msg(chosen, src, page_df, page_dt))
             except Exception as e:
-                push_msg("error", f"  ❌ {chosen}: {str(e)[:120]}")
+                err_str = str(e)
+                # لو الإلغاء سبب الخطأ — نتعامل بهدوء
+                if "cancelled" in err_str.lower() or _check_cancel():
+                    cancelled = True
+                    push_msg("warn", f"  🛑 {chosen}: تم إلغاء سحب الصفحة")
+                    break
+                push_msg("error", f"  ❌ {chosen}: {err_str[:120]}")
 
         update(progress=len(pages_all))
         finished = datetime.now(timezone.utc)
         duration = int((finished - started).total_seconds())
 
-        final_status = "success" if success_count > 0 else "error"
+        # نحدد الحالة النهائية: cancelled أولاً، ثم success/error
+        if cancelled:
+            final_status = "cancelled"
+        else:
+            final_status = "success" if success_count > 0 else "error"
 
         update(
             status=final_status,
@@ -909,6 +937,43 @@ def api_scrape_status(job_id):
     return jsonify({"error": "Not found"}), 404
 
 
+@app.route("/api/scrape/<job_id>/cancel", methods=["POST"])
+@login_required
+def api_scrape_cancel(job_id):
+    """
+    يطلب إلغاء عملية سحب جارية. الـ thread يفحص الـ flag في نقاط آمنة
+    (بين الصفحات + داخل polling لـ Apify) فيخرج بشكل نظيف.
+    """
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "not_found"}), 404
+        if job.get("user_id") != current_user.id:
+            return jsonify({"error": "forbidden"}), 403
+        if job["status"] not in ("queued", "running"):
+            return jsonify({
+                "ok": False,
+                "error": f"العملية ليست جارية (الحالة: {job['status']})",
+                "status": job["status"],
+            }), 409
+        # ضع الـ flag — الـ thread رح يلتقطها
+        job["cancel_requested"] = True
+        # سجّل رسالة في الـ log
+        job["messages"].append({
+            "time": datetime.now(timezone.utc).isoformat(),
+            "level": "warn",
+            "text": "🛑 طُلب الإلغاء من المستخدم — جارٍ الإيقاف…",
+        })
+    return jsonify({"ok": True, "status": "cancelling"})
+
+
+def _is_cancel_requested(job_uid: str) -> bool:
+    """Helper آمن thread-wise لفحص flag الإلغاء."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_uid)
+        return bool(job and job.get("cancel_requested"))
+
+
 @app.route("/api/scrape", methods=["GET"])
 @login_required
 def api_scrape_active():
@@ -948,7 +1013,7 @@ def api_scrape_stream(job_id):
                 "result": job["result"],
             }
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            if job["status"] in ("success", "error"):
+            if job["status"] in ("success", "error", "cancelled"):
                 break
             time.sleep(0.8)
 
@@ -1352,7 +1417,17 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
         date_to = params.get("date_to")
         force_src = params.get("source")
 
+        # callback لفحص cancel — نفس آلية manual scrape
+        def _check_cancel():
+            return _is_cancel_requested(job_uid)
+
+        cancelled = False
         for idx, page in enumerate(pages_all):
+            if _check_cancel():
+                cancelled = True
+                push_msg("warn", "🛑 تم إيقاف العملية المجدولة بناءً على طلب المستخدم")
+                break
+
             update(progress=idx, current_page=page.get("name", ""))
             push_msg("info", f"📌 [{idx + 1}/{len(pages_all)}] {page.get('name', '')}")
 
@@ -1369,6 +1444,11 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
                 push_msg("warn", f"  ⚠️ المصدر '{chosen}' غير مفعّل - استخدام {fallback_name}")
                 src = source_map[fallback_name]
                 chosen = fallback_name
+
+            try:
+                src.cancel_callback = _check_cancel
+            except Exception:
+                pass
 
             page_max = _resolve_max_posts(page.get("max_posts"), date_from, date_to)
             mode_hint = "بالتاريخ" if not page.get("max_posts") else f"حد {page_max}"
@@ -1394,12 +1474,20 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
                 else:
                     push_msg("warn", _build_no_posts_msg(chosen, src, date_from, date_to))
             except Exception as e:
-                push_msg("error", f"  ❌ {chosen}: {str(e)[:120]}")
+                err_str = str(e)
+                if "cancelled" in err_str.lower() or _check_cancel():
+                    cancelled = True
+                    push_msg("warn", f"  🛑 {chosen}: تم إلغاء سحب الصفحة")
+                    break
+                push_msg("error", f"  ❌ {chosen}: {err_str[:120]}")
 
         update(progress=len(pages_all))
         finished = datetime.now(timezone.utc)
         duration = int((finished - started).total_seconds())
-        final_status = "success" if success_count > 0 else "error"
+        if cancelled:
+            final_status = "cancelled"
+        else:
+            final_status = "success" if success_count > 0 else "error"
 
         with JOBS_LOCK:
             msgs = JOBS.get(job_uid, {}).get("messages", [])

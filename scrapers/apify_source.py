@@ -65,6 +65,10 @@ class ApifySource(BaseScraper):
         #       newest_ts, oldest_ts (unix seconds)
         self.last_diagnostic: dict = {}
 
+        # callback يفحصها server.py — يرجع True لو المستخدم طلب إلغاء.
+        # نفحصها داخل polling لـ Apify run، ولو true نطلب abort + raise.
+        self.cancel_callback = None
+
     async def health_check(self) -> bool:
         """تأكد من صلاحية Apify token"""
         if not self.token:
@@ -291,14 +295,35 @@ class ApifySource(BaseScraper):
         """
         انتظر لحين انتهاء الـ run.
         يرجع dataset_id للنتائج.
+
+        يفحص cancel_callback في كل دورة polling — لو طلب الإلغاء، نرسل
+        طلب abort للـ Apify run + نرفع SourceUnavailableError("cancelled")
+        عشان server.py يلتقطها ويتعامل معها.
         """
         url = f"{APIFY_BASE}/actor-runs/{run_id}"
+        abort_url = f"{APIFY_BASE}/actor-runs/{run_id}/abort"
 
         elapsed = 0
-        poll_interval = 10
+        # كل polling = 5 ثواني (كان 10) عشان نلتقط الإلغاء أسرع
+        poll_interval = 5
 
         async with aiohttp.ClientSession() as session:
             while elapsed < self.timeout_seconds:
+                # 🛑 فحص الإلغاء قبل كل poll
+                if callable(self.cancel_callback) and self.cancel_callback():
+                    # حاول abort الـ run على Apify (ما نفشل لو ما نجح)
+                    try:
+                        async with session.post(
+                            abort_url,
+                            headers=self.headers,
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as ar:
+                            ar_status = ar.status
+                            print(f"  🛑 [apify] طلب abort لـ {run_id} → HTTP {ar_status}")
+                    except Exception as e:
+                        print(f"  ⚠️  [apify] فشل abort: {e}")
+                    raise SourceUnavailableError(f"[apify] cancelled by user (run {run_id})")
+
                 async with session.get(
                     url,
                     headers=self.headers,

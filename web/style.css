@@ -8083,6 +8083,57 @@ html, body {
 }
 
 /* ================================================================
+   Cancel scrape button — في progress modal و history active rows
+   ================================================================ */
+.progress-cancel-bar {
+  margin-top: 0.75rem;
+  display: flex;
+  justify-content: center;
+}
+
+.btn-cancel-scrape {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+  border: 1px solid #b91c1c;
+  padding: 10px 22px;
+  border-radius: var(--radius);
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.25);
+}
+
+.btn-cancel-scrape:hover:not(:disabled) {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4);
+}
+
+.btn-cancel-scrape:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* الزر الصغير في active rows في history modal */
+.run-cancel-btn {
+  background: rgba(239, 68, 68, 0.1) !important;
+  color: #b91c1c !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+  font-weight: 600 !important;
+}
+
+.run-cancel-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.15) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+
+/* ================================================================
    Progress Modal — Smart auto-scroll + jump button
    ================================================================ */
 .progress-log-wrap {

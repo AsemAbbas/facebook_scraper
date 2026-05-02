@@ -2648,11 +2648,44 @@ function openProgressModal(jobId) {
         <div class="progress-log" id="progLog"></div>
         <button class="progress-jump-btn" id="progJumpBtn" type="button" hidden>↓ النزول للأسفل</button>
       </div>
+      <div class="progress-cancel-bar" id="progCancelBar">
+        <button class="btn-cancel-scrape" id="progCancelBtn" type="button">
+          🛑 إلغاء العملية
+        </button>
+      </div>
       <div class="progress-footer" id="progFooter" hidden>
         <button class="btn-trigger btn-full" id="progDoneBtn">✓ تم · عرض النتائج</button>
       </div>
     </div>
   `, 'lg');
+
+  // زر الإلغاء
+  const cancelBtn = document.getElementById('progCancelBtn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', async () => {
+      if (!confirm('هل تريد إلغاء عملية السحب؟ المنشورات التي تم سحبها حتى الآن ستُحفظ.')) return;
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = '⏳ جارٍ الإلغاء…';
+      try {
+        const res = await fetch(`/api/scrape/${encodeURIComponent(jobId)}/cancel`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        const d = await res.json().catch(() => ({}));
+        if (res.ok) {
+          showToast('🛑 طلب الإلغاء أُرسِل — سيتم الإيقاف خلال ثوانٍ', 'warn');
+        } else {
+          showToast(d.error || 'فشل الإلغاء', 'error');
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = '🛑 إلغاء العملية';
+        }
+      } catch (e) {
+        showToast('خطأ: ' + e.message, 'error');
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = '🛑 إلغاء العملية';
+      }
+    });
+  }
 
   const evtSource = new EventSource(`/api/scrape/${jobId}/stream`);
   const log = document.getElementById('progLog');
@@ -2701,6 +2734,7 @@ function openProgressModal(jobId) {
         if (data.status === 'running') statusEl.innerHTML = '🔄 قيد التنفيذ…';
         else if (data.status === 'success') statusEl.innerHTML = '✅ انتهى بنجاح';
         else if (data.status === 'error') statusEl.innerHTML = '⚠️ انتهى مع أخطاء';
+        else if (data.status === 'cancelled') statusEl.innerHTML = '🛑 تم الإلغاء';
       }
 
       // فحص الموضع قبل ما نضيف الرسائل (عشان نعرف هل auto-scroll مناسب)
@@ -2722,10 +2756,14 @@ function openProgressModal(jobId) {
         jumpBtn.hidden = false;
       }
 
-      if (data.status === 'success' || data.status === 'error') {
+      if (data.status === 'success' || data.status === 'error' || data.status === 'cancelled') {
         evtSource.close();
         const footer = document.getElementById('progFooter');
         if (footer) footer.hidden = false;
+
+        // اخفِ زر الإلغاء (انتهت العملية)
+        const cancelBar = document.getElementById('progCancelBar');
+        if (cancelBar) cancelBar.hidden = true;
 
         // refresh data in background so when user closes the modal the
         // new posts are already there
@@ -2746,8 +2784,13 @@ function openProgressModal(jobId) {
         if (doneBtn) {
           doneBtn.addEventListener('click', () => {
             closeModal();
-            showToast(data.status === 'success' ? '✅ تم تحديث البيانات' : '⚠️ انتهى مع أخطاء',
-                      data.status === 'success' ? 'success' : 'error');
+            const toastMap = {
+              success: { msg: '✅ تم تحديث البيانات', kind: 'success' },
+              error:   { msg: '⚠️ انتهى مع أخطاء',     kind: 'error'   },
+              cancelled:{msg: '🛑 تم إلغاء العملية',    kind: 'warn'    },
+            };
+            const t = toastMap[data.status] || toastMap.success;
+            showToast(t.msg, t.kind);
           });
         }
       }
@@ -2922,6 +2965,39 @@ function renderBackendHistory(active, history) {
     });
   });
 
+  // زر "🛑 إلغاء" للعمليات النشطة
+  document.querySelectorAll('.run-cancel-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const uid = btn.dataset.jobUid;
+      if (!uid) return;
+      if (!confirm('هل تريد إلغاء عملية السحب هذه؟ المنشورات المسحوبة حتى الآن ستُحفظ.')) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '⏳ جارٍ الإلغاء…';
+      try {
+        const res = await fetch(`/api/scrape/${encodeURIComponent(uid)}/cancel`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        const d = await res.json().catch(() => ({}));
+        if (res.ok) {
+          showToast('🛑 طلب الإلغاء أُرسِل', 'warn');
+          // تحديث الـ history modal بعد ثانية
+          setTimeout(() => openHistoryModal(), 1500);
+        } else {
+          showToast(d.error || 'فشل الإلغاء', 'error');
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+      } catch (err) {
+        showToast('خطأ: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+  });
+
   // Per-row delete in history
   document.querySelectorAll('.run-delete-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -2986,6 +3062,7 @@ function renderBackendRunRow(r, isActive) {
     running: { label: '🔄 قيد التشغيل', color: 'warn' },
     success: { label: '✅ نجح', color: 'success' },
     error: { label: '❌ فشل', color: 'error' },
+    cancelled: { label: '🛑 ألغيت', color: 'muted' },
   };
   const s = statusMap[r.status] || { label: r.status, color: 'muted' };
   const duration = r.duration_seconds ||
@@ -3015,7 +3092,8 @@ function renderBackendRunRow(r, isActive) {
       </div>
       <div class="run-row-actions">
         ${isActive
-          ? '<span class="run-link">عرض التقدم ↑</span>'
+          ? `<button class="btn-refresh btn-sm run-cancel-btn" data-job-uid="${escapeHtml(jobUid || '')}" type="button" title="إلغاء العملية" onclick="event.stopPropagation()">🛑 إلغاء</button>
+             <span class="run-link">عرض التقدم ↑</span>`
           : (jobUid ? `<button class="btn-refresh btn-sm run-detail-btn" data-job-uid="${escapeHtml(jobUid)}" type="button" title="عرض السجل التفصيلي" onclick="event.stopPropagation()">📋 التفاصيل</button>` : '')
         }
         ${!isActive && jobUid ? `<button class="btn-icon-sm btn-danger run-delete-btn" data-job-uid="${escapeHtml(jobUid)}" type="button" title="حذف هذا السجل" onclick="event.stopPropagation()">×</button>` : ''}
@@ -3063,6 +3141,7 @@ async function showJobDetailModal(jobUid) {
     running: { label: '🔄 قيد التشغيل', color: 'warn' },
     success: { label: '✅ نجح', color: 'success' },
     error: { label: '❌ فشل', color: 'error' },
+    cancelled: { label: '🛑 ألغيت', color: 'muted' },
   };
   const s = statusMap[job.status] || { label: job.status, color: 'muted' };
   const params = job.params || {};
