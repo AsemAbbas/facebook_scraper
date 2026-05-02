@@ -888,6 +888,23 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
                     "text": text,
                 })
 
+    def _persist_messages_to_db(status: str = None):
+        """يحفظ كل الـ messages الحالية + الحالة في DB.
+        يُستدعى عند أي إنهاء (success/error/cancelled/early-exit) لضمان
+        أن سجل التفاصيل لا يُفقد."""
+        try:
+            with JOBS_LOCK:
+                msgs = list(JOBS.get(job_uid, {}).get("messages", []))
+            update_kwargs = {
+                "messages_json": json.dumps(msgs, ensure_ascii=False),
+                "finished_at": datetime.now(timezone.utc),
+            }
+            if status:
+                update_kwargs["status"] = status
+            db.update_job(job_uid, **update_kwargs)
+        except Exception as e:
+            print(f"[server] _persist_messages_to_db failed: {e}")
+
     update(status="running")
     db.update_job(job_uid, status="running")
     push_msg("info", "🚀 بدء العملية…")
@@ -911,8 +928,7 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
             push_msg("error", "لا توجد صفحات مفعّلة")
             update(status="error",
                    finished_at=datetime.now(timezone.utc).isoformat())
-            db.update_job(job_uid, status="error",
-                          finished_at=datetime.now(timezone.utc))
+            _persist_messages_to_db(status="error")
             return
 
         update(total=len(pages_all))
@@ -926,8 +942,7 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
             push_msg("error", "لا يوجد مصدر مفعّل - افتح الإعدادات وفعّل Apify أو RSS")
             update(status="error",
                    finished_at=datetime.now(timezone.utc).isoformat())
-            db.update_job(job_uid, status="error",
-                          finished_at=datetime.now(timezone.utc))
+            _persist_messages_to_db(status="error")
             return
 
         push_msg("info", f"🔌 المصادر المفعّلة: {', '.join(source_map.keys())}")
@@ -1042,7 +1057,11 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
             },
         )
 
-        # persist to DB
+        # سطر النهاية يجب يضاف قبل الحفظ في DB حتى يظهر في detail لاحقاً
+        push_msg("success",
+                 f"🏁 انتهى. {total_new} منشور جديد · {success_count}/{len(pages_all)} صفحة")
+
+        # persist to DB (مع messages_json كاملة)
         with JOBS_LOCK:
             msgs = JOBS.get(job_uid, {}).get("messages", [])
         db.update_job(
@@ -1058,14 +1077,11 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
             messages_json=json.dumps(msgs, ensure_ascii=False),
         )
 
-        push_msg("success",
-                 f"🏁 انتهى. {total_new} منشور جديد · {success_count}/{len(pages_all)} صفحة")
-
     except Exception as e:
         push_msg("error", f"خطأ غير متوقع: {e}")
         update(status="error", finished_at=datetime.now(timezone.utc).isoformat())
-        db.update_job(job_uid, status="error",
-                      finished_at=datetime.now(timezone.utc))
+        # ⚠️ لا تنسَ حفظ الـ messages حتى عند الـ exception
+        _persist_messages_to_db(status="error")
 
 
 @app.route("/api/scrape/<job_id>", methods=["GET"])
@@ -1198,16 +1214,53 @@ def api_history_detail(job_uid):
 @app.route("/api/history", methods=["DELETE"])
 @login_required
 def api_history_clear():
-    """يمسح كل سجل العمليات للمستخدم الحالي"""
-    n = db.delete_jobs_all(current_user.id)
-    return jsonify({"ok": True, "deleted": n})
+    """
+    يمسح كل سجل العمليات للمستخدم الحالي (jobs table + messages_json معه).
+    لا يحذف الـ active jobs (queued/running).
+    """
+    # نتفقد الـ active jobs وما نحذفها
+    with JOBS_LOCK:
+        active_uids = {
+            uid for uid, j in JOBS.items()
+            if j.get("user_id") == current_user.id
+            and j.get("status") in ("queued", "running")
+        }
+
+    if active_uids:
+        n = db.delete_jobs_except(current_user.id, list(active_uids))
+    else:
+        n = db.delete_jobs_all(current_user.id)
+
+    # نظّف JOBS dict من entries المنتهية لهذا المستخدم
+    with JOBS_LOCK:
+        to_remove = [
+            uid for uid, j in JOBS.items()
+            if j.get("user_id") == current_user.id
+            and j.get("status") not in ("queued", "running")
+        ]
+        for uid in to_remove:
+            JOBS.pop(uid, None)
+
+    return jsonify({"ok": True, "deleted": n, "skipped_active": len(active_uids)})
 
 
 @app.route("/api/history/<job_uid>", methods=["DELETE"])
 @login_required
 def api_history_delete_one(job_uid):
-    """يمسح سطر واحد من السجل (job_uid)"""
+    """يمسح سطر واحد من السجل (DB + messages_json)."""
+    # ما نسمح بحذف active job
+    with JOBS_LOCK:
+        j = JOBS.get(job_uid)
+        if j and j.get("user_id") == current_user.id and j.get("status") in ("queued", "running"):
+            return jsonify({"ok": False, "error": "العملية لا تزال جارية - ألغها أولاً"}), 409
+
     n = db.delete_job(current_user.id, job_uid)
+
+    # نظّف من JOBS dict أيضاً
+    with JOBS_LOCK:
+        if job_uid in JOBS and JOBS[job_uid].get("user_id") == current_user.id:
+            JOBS.pop(job_uid, None)
+
     return jsonify({"ok": bool(n), "deleted": n})
 
 
@@ -1518,6 +1571,21 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
                     "text": text,
                 })
 
+    def _persist_messages_to_db(status: str = None):
+        """يحفظ messages الحالية + status في DB لكل early-exit/exception"""
+        try:
+            with JOBS_LOCK:
+                msgs = list(JOBS.get(job_uid, {}).get("messages", []))
+            update_kwargs = {
+                "messages_json": json.dumps(msgs, ensure_ascii=False),
+                "finished_at": datetime.now(timezone.utc),
+            }
+            if status:
+                update_kwargs["status"] = status
+            db.update_job(job_uid, **update_kwargs)
+        except Exception as e:
+            print(f"[server] _persist_messages_to_db (scheduled) failed: {e}")
+
     update(status="running")
     db.update_job(job_uid, status="running")
     push_msg("info", f"🕐 مهمة مجدولة: {params.get('schedule_name', '')}")
@@ -1532,8 +1600,7 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
             push_msg("error", "لا توجد صفحات مفعّلة")
             update(status="error",
                    finished_at=datetime.now(timezone.utc).isoformat())
-            db.update_job(job_uid, status="error",
-                          finished_at=datetime.now(timezone.utc))
+            _persist_messages_to_db(status="error")
             return
 
         update(total=len(pages_all))
@@ -1545,8 +1612,7 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
             push_msg("error", "لا يوجد مصدر مفعّل. افتح الإعدادات وفعّل Apify أو RSS.")
             update(status="error",
                    finished_at=datetime.now(timezone.utc).isoformat())
-            db.update_job(job_uid, status="error",
-                          finished_at=datetime.now(timezone.utc))
+            _persist_messages_to_db(status="error")
             return
 
         push_msg("info", f"🔌 المصادر المفعّلة: {', '.join(source_map.keys())}")
@@ -1641,13 +1707,17 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
         else:
             final_status = "success" if success_count > 0 else "error"
 
-        with JOBS_LOCK:
-            msgs = JOBS.get(job_uid, {}).get("messages", [])
-
         update(status=final_status, finished_at=finished.isoformat(),
                result={"new_posts": total_new, "success": success_count,
                        "failed": len(pages_all) - success_count,
                        "sources_used": list(sources_used)})
+
+        # سطر النهاية يجب يضاف قبل الحفظ في DB
+        push_msg("success",
+                 f"🏁 انتهى. {total_new} منشور جديد · {success_count}/{len(pages_all)} صفحة")
+
+        with JOBS_LOCK:
+            msgs = JOBS.get(job_uid, {}).get("messages", [])
 
         db.update_job(
             job_uid,
@@ -1662,14 +1732,11 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
             messages_json=json.dumps(msgs, ensure_ascii=False),
         )
 
-        push_msg("success",
-                 f"🏁 انتهى. {total_new} منشور جديد · {success_count}/{len(pages_all)} صفحة")
-
     except Exception as e:
         push_msg("error", f"خطأ: {e}")
         update(status="error", finished_at=datetime.now(timezone.utc).isoformat())
-        db.update_job(job_uid, status="error",
-                      finished_at=datetime.now(timezone.utc))
+        # ⚠️ احفظ الـ messages حتى عند الـ exception
+        _persist_messages_to_db(status="error")
 
 
 def _scheduler_loop():

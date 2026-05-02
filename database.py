@@ -426,6 +426,54 @@ def init_db() -> None:
     except Exception as e:
         print(f"[db] category migration skipped: {e}")
 
+    # Migration: إضافة source 'openai_classifier' لكل user (DEFAULT_SOURCES
+    # يُستعمل فقط لـ users جدد — هذا يضمن المستخدمين الحاليين أيضاً)
+    try:
+        _migrate_ensure_openai_classifier()
+    except Exception as e:
+        print(f"[db] openai_classifier migration skipped: {e}")
+
+
+def _migrate_ensure_openai_classifier() -> None:
+    """يضمن أن كل user عنده source openai_classifier (معطّل افتراضياً)."""
+    now = datetime.now(timezone.utc)
+    default_cfg = next(
+        (s for s in DEFAULT_SOURCES if s["source_name"] == "openai_classifier"),
+        None,
+    )
+    if not default_cfg:
+        return
+    with db_cursor() as cur:
+        # كل المستخدمين
+        cur.execute("SELECT id FROM users")
+        user_rows = cur.fetchall() or []
+        user_ids = [r["id"] if isinstance(r, dict) else r[0] for r in user_rows]
+        if not user_ids:
+            return
+        added = 0
+        for uid in user_ids:
+            cur.execute("""
+                SELECT 1 FROM source_settings
+                WHERE user_id=%s AND source_name='openai_classifier'
+                LIMIT 1
+            """, (uid,))
+            if cur.fetchone():
+                continue
+            cur.execute("""
+                INSERT INTO source_settings
+                  (user_id, source_name, enabled, priority, token_encrypted, config_json, updated_at)
+                VALUES (%s, 'openai_classifier', %s, %s, '', %s, %s)
+            """, (
+                uid,
+                int(default_cfg.get("enabled", 0)),
+                int(default_cfg.get("priority", 99)),
+                json.dumps(default_cfg.get("config", {}), ensure_ascii=False),
+                now,
+            ))
+            added += 1
+        if added:
+            print(f"[db] added openai_classifier source to {added} existing user(s)")
+
 
 def _migrate_add_category_column() -> None:
     """يضيف عمود category لـ posts لو غير موجود + index."""
@@ -1497,6 +1545,20 @@ def delete_jobs_all(user_id: int) -> int:
     """يمسح كل jobs لمستخدم - يرجع العدد المحذوف"""
     with db_cursor() as cur:
         cur.execute("DELETE FROM jobs WHERE user_id=%s", (user_id,))
+        return cur.rowcount
+
+
+def delete_jobs_except(user_id: int, except_uids: list) -> int:
+    """
+    يمسح كل jobs لمستخدم ما عدا الـ uids المحددة (الـ active jobs).
+    يرجع العدد المحذوف.
+    """
+    if not except_uids:
+        return delete_jobs_all(user_id)
+    placeholders = ",".join(["%s"] * len(except_uids))
+    sql = f"DELETE FROM jobs WHERE user_id=%s AND job_uid NOT IN ({placeholders})"
+    with db_cursor() as cur:
+        cur.execute(sql, [user_id, *except_uids])
         return cur.rowcount
 
 
