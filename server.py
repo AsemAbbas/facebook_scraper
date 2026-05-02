@@ -859,9 +859,9 @@ def _run_scrape_job(user_id: int, job_uid: str, params: dict):
                     posts_dicts = [p.to_dict() for p in posts_result]
                     ins = db.insert_posts(user_id, page["slug"], posts_dicts)
                     new_n = ins["new"]
-                    dup_n = ins["dup"]
+                    upd_n = ins["updated"]
                     push_msg("success",
-                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد، {dup_n} مكرر)")
+                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد، {upd_n} محدّث)")
                     total_new += new_n
                     success_count += 1
                     sources_used.add(chosen)
@@ -1465,9 +1465,9 @@ def _run_scheduled_scrape(user_id: int, job_uid: str, params: dict):
                     posts_dicts = [p.to_dict() for p in posts_result]
                     ins = db.insert_posts(user_id, page["slug"], posts_dicts)
                     new_n = ins["new"]
-                    dup_n = ins["dup"]
+                    upd_n = ins["updated"]
                     push_msg("success",
-                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد، {dup_n} مكرر)")
+                             f"  ✅ {chosen}: {len(posts_result)} سُحب ({new_n} جديد، {upd_n} محدّث)")
                     total_new += new_n
                     success_count += 1
                     sources_used.add(chosen)

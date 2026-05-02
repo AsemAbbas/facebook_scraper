@@ -945,39 +945,45 @@ def _global_url_fingerprint(post_url: str) -> str:
 
 def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> dict:
     """
-    يدخل المنشورات ويرجع dict: {"new": N, "dup": M, "total": N+M}
-    يمنع التكرار على 4 مستويات:
-      1. UNIQUE KEY على (user_id, page_slug, post_id) - دفاع DB
-      2. cross-page post_id: نفس الـ ID موجود في أي صفحة أخرى للمستخدم → skip
-      3. cross-page canonical URL: نفس الرابط (بعد تطبيع) في أي صفحة → skip
-      4. within-page text fingerprint: نفس النص على نفس الصفحة → skip
+    يدخل المنشورات الجديدة ويُحدّث الموجودة. يرجع:
+      {"new": N, "updated": M, "total": T}
 
-    ملاحظة: التوقيع تغيّر من int إلى dict — الـ callers يجب يستعملوا
-    result["new"] بدل النتيجة المباشرة.
+    Upsert logic:
+      - لو post_id موجود في **نفس الصفحة** → UPDATE (التفاعل المتغيّر فقط)
+      - لو post_id موجود في **صفحة أخرى** للمستخدم → skip (لا نلمسه)
+      - لو URL موجود في صفحة أخرى → skip
+      - لو منشور بدون post_id لكن نصه مكرر داخل نفس الصفحة → skip
+
+    الحقول المُحدّثة عند existence:
+      reactions, comments, shares, scraped_at, raw_json
+    الحقول الثابتة (لا تتغيّر بعد أول insert):
+      text, text_normalized, page_name, post_url, media, published_at
     """
     if not posts:
-        return {"new": 0, "dup": 0, "total": 0}
+        return {"new": 0, "updated": 0, "total": 0}
     new_count = 0
-    skipped_dup = 0
+    updated_count = 0
 
     with db_cursor() as cur:
-        # 1) كل post_ids الموجودة لهذا المستخدم (cross-page)
+        # نقسم post_ids و URLs بحسب الصفحة:
+        #   - في نفس الصفحة → عادي، الـ ON DUPLICATE KEY يتعامل
+        #   - في صفحات أخرى → skip
         cur.execute("SELECT post_id, post_url, text, page_slug FROM posts WHERE user_id=%s",
                     (user_id,))
         rows = cur.fetchall() or []
-        existing_pids_global: set[str] = set()
-        existing_urls_global: set[str] = set()    # canonical URL fingerprints
-        existing_texts_for_page: set[str] = set()  # text fingerprints لـ هذه الصفحة فقط
+        existing_pids_other_pages: set[str] = set()
+        existing_urls_other_pages: set[str] = set()
+        existing_texts_for_page: set[str] = set()
         for r in rows:
             pid = r.get("post_id") if isinstance(r, dict) else r[0]
             purl = r.get("post_url") if isinstance(r, dict) else r[1]
             ptxt = r.get("text") if isinstance(r, dict) else r[2]
             slug = r.get("page_slug") if isinstance(r, dict) else r[3]
-            if pid:
-                existing_pids_global.add(str(pid))
+            if pid and slug != page_slug:
+                existing_pids_other_pages.add(str(pid))
             ufp = _global_url_fingerprint(purl or "")
-            if ufp:
-                existing_urls_global.add(ufp)
+            if ufp and slug != page_slug:
+                existing_urls_other_pages.add(ufp)
             if slug == page_slug and ptxt:
                 norm = ptxt.strip()[:300]
                 if norm:
@@ -995,38 +1001,50 @@ def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> dict:
             purl = p.get("post_url") or ""
             ptxt = p.get("text") or ""
 
-            # 1. تكرار بالـ post_id (في أي صفحة لهذا المستخدم)
-            if pid and (pid in existing_pids_global or pid in seen_ids_batch):
-                skipped_dup += 1
+            # 1. cross-page post_id → skip (لا نلمس row في صفحة أخرى)
+            if pid and pid in existing_pids_other_pages:
                 continue
 
-            # 2. تكرار بالرابط بعد تطبيعه (cross-page)
+            # batch dedupe (نفس post_id ظهر مرتين في نفس البـatch)
+            if pid and pid in seen_ids_batch:
+                continue
+
+            # 2. cross-page URL → skip
             ufp = _global_url_fingerprint(purl)
-            if ufp and (ufp in existing_urls_global or ufp in seen_urls_batch):
-                skipped_dup += 1
+            if ufp and (ufp in existing_urls_other_pages or ufp in seen_urls_batch):
                 continue
 
-            # 3. تكرار النص داخل نفس الصفحة (للمنشورات بدون رابط واضح)
+            # 3. text fingerprint within page (للمنشورات بدون post_id)
+            #    لو في post_id فالـ UNIQUE KEY في DB يكفي للـ dedupe
             tfp = ""
-            norm_text = ptxt.strip()[:300]
-            if norm_text:
-                tfp = hashlib.sha1(norm_text.encode("utf-8")).hexdigest()[:32]
-                if tfp in existing_texts_for_page or tfp in seen_texts_batch:
-                    skipped_dup += 1
-                    continue
+            if not pid:
+                norm_text = ptxt.strip()[:300]
+                if norm_text:
+                    tfp = hashlib.sha1(norm_text.encode("utf-8")).hexdigest()[:32]
+                    if tfp in existing_texts_for_page or tfp in seen_texts_batch:
+                        continue
 
             # 4. لا ID ولا URL ولا نص → نتجاهله
             if not pid and not ufp and not tfp:
-                skipped_dup += 1
                 continue
 
             try:
+                # INSERT...ON DUPLICATE KEY UPDATE
+                # عند conflict على UNIQUE (user_id, page_slug, post_id):
+                #   نحدّث فقط الحقول التفاعلية المتغيّرة + scraped_at + raw_json
+                #   النص والصور والـ page_name تبقى كما أدخلت أول مرة
                 cur.execute("""
-                    INSERT IGNORE INTO posts
+                    INSERT INTO posts
                     (user_id, page_slug, post_id, page_name, page_url, text, text_normalized,
                      post_url, image_url, video_url, published_at, scraped_at,
                      timestamp_text, reactions, comments, shares, source, post_type, raw_json)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        reactions  = VALUES(reactions),
+                        comments   = VALUES(comments),
+                        shares     = VALUES(shares),
+                        scraped_at = VALUES(scraped_at),
+                        raw_json   = VALUES(raw_json)
                 """, (
                     user_id, page_slug, pid,
                     p.get("page_name", ""), p.get("page_url", ""),
@@ -1041,25 +1059,31 @@ def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> dict:
                     p.get("source", ""), p.get("post_type", "text"),
                     json.dumps(p, ensure_ascii=False),
                 ))
-                if cur.rowcount > 0:
+                # MySQL rowcount semantics لـ INSERT...ON DUPLICATE KEY UPDATE:
+                #   1 → INSERT جديد
+                #   2 → UPDATE (الصف موجود، التفاعل تغيّر فعلاً)
+                #   0 → UPDATE بدون تغيير (نفس القيم)
+                # نعتبر 0 و 2 كلاهما "محدّث" (الصف وُجد مسبقاً)
+                rc = cur.rowcount
+                if rc == 1:
                     new_count += 1
                     if pid:
                         seen_ids_batch.add(pid)
-                        existing_pids_global.add(pid)
                     if ufp:
                         seen_urls_batch.add(ufp)
-                        existing_urls_global.add(ufp)
                     if tfp:
                         seen_texts_batch.add(tfp)
                         existing_texts_for_page.add(tfp)
                 else:
-                    # INSERT IGNORE لم يدخل (UNIQUE conflict) → مكرر على DB level
-                    skipped_dup += 1
+                    # rc == 2 (تغيّر فعلاً) أو rc == 0 (نفس القيم)
+                    updated_count += 1
+                    if pid:
+                        seen_ids_batch.add(pid)
             except Exception:
                 continue
     return {
         "new": new_count,
-        "dup": skipped_dup,
+        "updated": updated_count,
         "total": len(posts),
     }
 
