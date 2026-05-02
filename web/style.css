@@ -7567,6 +7567,44 @@ body.exporting-pdf .analytics-stamp { display: block !important; }
   color: var(--text-secondary);
 }
 
+/* مؤشر "مباشر" للتحديث التلقائي */
+.kw-live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.1);
+  padding: 3px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(22, 163, 74, 0.25);
+  letter-spacing: 0.02em;
+}
+.kw-live-indicator::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: #16a34a;
+  border-radius: 50%;
+  animation: kwPulse 2s ease-in-out infinite;
+}
+@keyframes kwPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.8); }
+}
+
+/* Flash animation عند تغيير match_count */
+.kw-stat-num.kw-num-flash {
+  animation: kwNumFlash 1.2s ease-out;
+}
+@keyframes kwNumFlash {
+  0%   { color: var(--accent-700); transform: scale(1.15); }
+  50%  { color: var(--accent-600); transform: scale(1.08); }
+  100% { color: inherit; transform: scale(1); }
+}
+
 .kw-summary-item strong {
   font-family: var(--font-display);
   color: var(--accent-700);

@@ -2694,6 +2694,10 @@ function openProgressModal(jobId) {
             await loadAllPages();
             await loadHistory();
             applyFilters();
+            // تحديث فوري للكلمات المفتاحية لو المستخدم في تبويب keywords
+            if (STATE.currentView === 'keywords' && typeof refreshKeywordsCounts === 'function') {
+              refreshKeywordsCounts();
+            }
           } catch {}
         })();
 
@@ -4600,6 +4604,9 @@ function switchView(view) {
   }
   if (view === 'keywords') {
     renderKeywordsView();
+    startKeywordsPolling();
+  } else {
+    stopKeywordsPolling();
   }
   // حفظ في localStorage عشان الـ view يتذكّر
   try { localStorage.setItem('marsad_view', view); } catch {}
@@ -6207,6 +6214,8 @@ function debounce(fn, ms) {
 
 let _keywordsCache = null;
 let _activeKeywordId = null;
+let _keywordsPollTimer = null;
+const KEYWORDS_POLL_INTERVAL_MS = 15000;  // 15 ثانية
 
 async function renderKeywordsView() {
   const pane = document.getElementById('keywordsView');
@@ -6235,6 +6244,82 @@ async function renderKeywordsView() {
   _renderKeywordsList(pane);
 }
 
+// ----- Polling: تحديث match_count تلقائياً كل 15 ثانية ------------------
+// يحدّث القيم على الـ cards الموجودة بدون re-render كامل عشان ما يقطع تفاعل
+// المستخدم (مثل إذا كان يكتب في input). يتوقف عند مغادرة التبويب.
+
+function startKeywordsPolling() {
+  stopKeywordsPolling();  // safety
+  _keywordsPollTimer = setInterval(refreshKeywordsCounts, KEYWORDS_POLL_INTERVAL_MS);
+}
+
+function stopKeywordsPolling() {
+  if (_keywordsPollTimer) {
+    clearInterval(_keywordsPollTimer);
+    _keywordsPollTimer = null;
+  }
+}
+
+async function refreshKeywordsCounts() {
+  // لو المستخدم انتقل لـ view آخر، نوقف
+  if (STATE.currentView !== 'keywords') {
+    stopKeywordsPolling();
+    return;
+  }
+  // لو في detail view مفتوح، نسكب
+  if (_activeKeywordId) return;
+
+  try {
+    const res = await fetch('/api/keywords', { credentials: 'include' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const newKws = data.keywords || [];
+    _keywordsCache = newKws;
+
+    // تحديث match_count على cards الموجودة بدون re-render
+    let listChanged = false;
+    newKws.forEach(kw => {
+      const card = document.querySelector(`.kw-card[data-id="${kw.id}"]`);
+      if (!card) {
+        listChanged = true;  // كلمة جديدة أُضيفت من جلسة أخرى
+        return;
+      }
+      const numEl = card.querySelector('.kw-stat-num');
+      if (numEl) {
+        const oldVal = parseInt(numEl.dataset.value || '0');
+        const newVal = kw.match_count || 0;
+        if (oldVal !== newVal) {
+          numEl.textContent = formatNum(newVal);
+          numEl.dataset.value = String(newVal);
+          // فلاش بصري عند التغيير (يومض بريقة برتقالية)
+          numEl.classList.remove('kw-num-flash');
+          void numEl.offsetWidth;  // reflow عشان animation تشتغل من جديد
+          numEl.classList.add('kw-num-flash');
+        }
+      }
+    });
+
+    // عدد الكلمات في DOM vs server — لو تغير، reload كامل
+    const cardsInDom = document.querySelectorAll('.kw-card').length;
+    if (listChanged || cardsInDom !== newKws.length) {
+      const pane = document.getElementById('keywordsView');
+      if (pane && !_activeKeywordId) {
+        _renderKeywordsList(pane);
+      }
+      return;
+    }
+
+    // تحديث الإجمالي
+    const totalEl = document.querySelector('.kw-summary-item[data-total-matches] strong');
+    if (totalEl) {
+      const total = newKws.reduce((s, k) => s + (k.match_count || 0), 0);
+      totalEl.textContent = formatNum(total);
+    }
+  } catch (e) {
+    // silent fail — polling يكمل لاحقاً
+  }
+}
+
 function _renderKeywordsList(pane) {
   const kws = _keywordsCache || [];
   const totalMatches = kws.reduce((s, k) => s + (k.match_count || 0), 0);
@@ -6248,7 +6333,8 @@ function _renderKeywordsList(pane) {
         </div>
         <div class="kw-summary">
           <span class="kw-summary-item"><strong>${formatNum(kws.length)}</strong> كلمة</span>
-          <span class="kw-summary-item"><strong>${formatNum(totalMatches)}</strong> مطابقة إجمالية</span>
+          <span class="kw-summary-item" data-total-matches><strong>${formatNum(totalMatches)}</strong> مطابقة إجمالية</span>
+          <span class="kw-live-indicator" title="تحديث تلقائي كل 15 ثانية">● مباشر</span>
         </div>
       </div>
 
@@ -6334,6 +6420,7 @@ function _renderKeywordsList(pane) {
 
 function _renderKeywordCard(k) {
   const modeLabel = { contains: 'يحتوي', exact: 'مطابق', hashtag: 'هاشتاق' }[k.match_mode] || 'يحتوي';
+  const count = k.match_count || 0;
   return `
     <div class="kw-card" data-id="${k.id}">
       <div class="kw-card-head">
@@ -6346,7 +6433,7 @@ function _renderKeywordCard(k) {
         </div>
       </div>
       <div class="kw-card-stats">
-        <div class="kw-stat-num">${formatNum(k.match_count || 0)}</div>
+        <div class="kw-stat-num" data-value="${count}">${formatNum(count)}</div>
         <div class="kw-stat-lbl">مطابقة</div>
       </div>
       <div class="kw-card-footer">

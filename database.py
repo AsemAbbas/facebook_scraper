@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from arabic_text import normalize as _ar_normalize, normalize_keyword as _ar_normalize_kw
+
 try:
     import pymysql
     from pymysql.cursors import DictCursor
@@ -232,6 +234,7 @@ SCHEMA_STATEMENTS = [
         page_name       VARCHAR(255),
         page_url        TEXT,
         text            TEXT,
+        text_normalized TEXT,
         post_url        TEXT,
         image_url       TEXT,
         video_url       TEXT,
@@ -299,6 +302,7 @@ SCHEMA_STATEMENTS = [
         id              INT AUTO_INCREMENT PRIMARY KEY,
         user_id         INT NOT NULL,
         text            VARCHAR(255) NOT NULL,
+        text_normalized VARCHAR(255) NOT NULL DEFAULT '',
         color           VARCHAR(20) DEFAULT '',
         enabled         TINYINT(1) DEFAULT 1,
         match_mode      VARCHAR(16) DEFAULT 'contains', -- contains | exact | hashtag
@@ -306,6 +310,7 @@ SCHEMA_STATEMENTS = [
         created_at      DATETIME NOT NULL,
         UNIQUE KEY uniq_user_kw (user_id, text(190)),
         KEY idx_user (user_id),
+        KEY idx_norm (user_id, text_normalized(190)),
         CONSTRAINT fk_keywords_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
@@ -395,6 +400,93 @@ def init_db() -> None:
         _recompute_schedules_next_run()
     except Exception as e:
         print(f"[db] schedules next_run recompute skipped: {e}")
+
+    # Migration: إضافة text_normalized للـ posts و keywords + backfill
+    # هذا يفعّل البحث المرن (أسرى/الأسرى/اسرى → نفس الكلمة)
+    try:
+        _migrate_normalize_columns()
+    except Exception as e:
+        print(f"[db] normalize columns migration skipped: {e}")
+
+
+def _migrate_normalize_columns() -> None:
+    """
+    يضيف عمود text_normalized لو غير موجود + يعبّأ القيم للـ rows القديمة.
+    يستدعى عند كل bootup — إذا الأعمدة موجودة والـ rows مطبّعة، ما يفعل شي.
+    """
+    with db_cursor() as cur:
+        # 1) فحص + إضافة العمود في posts
+        cur.execute("""
+            SELECT COUNT(*) AS n FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = 'posts' AND column_name = 'text_normalized'
+        """)
+        row = cur.fetchone() or {}
+        has_col_posts = (row.get("n") if isinstance(row, dict) else row[0]) > 0
+        if not has_col_posts:
+            print("[db] adding posts.text_normalized column...")
+            cur.execute("ALTER TABLE posts ADD COLUMN text_normalized TEXT AFTER text")
+
+        # 2) فحص + إضافة العمود في keywords
+        cur.execute("""
+            SELECT COUNT(*) AS n FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = 'keywords' AND column_name = 'text_normalized'
+        """)
+        row = cur.fetchone() or {}
+        has_col_kw = (row.get("n") if isinstance(row, dict) else row[0]) > 0
+        if not has_col_kw:
+            print("[db] adding keywords.text_normalized column...")
+            cur.execute("""
+                ALTER TABLE keywords
+                  ADD COLUMN text_normalized VARCHAR(255) NOT NULL DEFAULT '' AFTER text
+            """)
+            # محاولة إضافة index (يفشل بصمت لو موجود)
+            try:
+                cur.execute("CREATE INDEX idx_norm ON keywords (user_id, text_normalized(190))")
+            except Exception:
+                pass
+
+        # 3) backfill: rows بدون text_normalized نملاها
+        cur.execute("SELECT COUNT(*) AS n FROM posts WHERE text_normalized IS NULL OR text_normalized = ''")
+        row = cur.fetchone() or {}
+        n_posts = (row.get("n") if isinstance(row, dict) else row[0]) or 0
+        if n_posts:
+            print(f"[db] backfilling text_normalized for {n_posts} posts...")
+            # batch loop عشان ما نحمّل الـ memory
+            BATCH = 500
+            done = 0
+            while True:
+                cur.execute("""
+                    SELECT id, text FROM posts
+                    WHERE text_normalized IS NULL OR text_normalized = ''
+                    LIMIT %s
+                """, (BATCH,))
+                rows = cur.fetchall() or []
+                if not rows:
+                    break
+                for r in rows:
+                    pid = r["id"] if isinstance(r, dict) else r[0]
+                    txt = r["text"] if isinstance(r, dict) else r[1]
+                    norm = _ar_normalize(txt or "")
+                    cur.execute("UPDATE posts SET text_normalized=%s WHERE id=%s", (norm, pid))
+                done += len(rows)
+                if len(rows) < BATCH:
+                    break
+            print(f"[db] backfilled {done} post(s).")
+
+        cur.execute("SELECT COUNT(*) AS n FROM keywords WHERE text_normalized IS NULL OR text_normalized = ''")
+        row = cur.fetchone() or {}
+        n_kw = (row.get("n") if isinstance(row, dict) else row[0]) or 0
+        if n_kw:
+            print(f"[db] backfilling text_normalized for {n_kw} keywords...")
+            cur.execute("SELECT id, text FROM keywords WHERE text_normalized IS NULL OR text_normalized = ''")
+            for r in cur.fetchall() or []:
+                kid = r["id"] if isinstance(r, dict) else r[0]
+                txt = r["text"] if isinstance(r, dict) else r[1]
+                norm = _ar_normalize_kw(txt or "")
+                cur.execute("UPDATE keywords SET text_normalized=%s WHERE id=%s", (norm, kid))
+            print(f"[db] backfilled {n_kw} keyword(s).")
 
 
 def _recompute_schedules_next_run() -> None:
@@ -928,14 +1020,14 @@ def insert_posts(user_id: int, page_slug: str, posts: list[dict]) -> int:
             try:
                 cur.execute("""
                     INSERT IGNORE INTO posts
-                    (user_id, page_slug, post_id, page_name, page_url, text,
+                    (user_id, page_slug, post_id, page_name, page_url, text, text_normalized,
                      post_url, image_url, video_url, published_at, scraped_at,
                      timestamp_text, reactions, comments, shares, source, post_type, raw_json)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     user_id, page_slug, pid,
                     p.get("page_name", ""), p.get("page_url", ""),
-                    ptxt, purl,
+                    ptxt, _ar_normalize(ptxt), purl,
                     p.get("image_url", ""), p.get("video_url", ""),
                     _parse_dt(p.get("published_at")),
                     _parse_dt(p.get("scraped_at")) or datetime.now(timezone.utc),
@@ -1707,14 +1799,22 @@ def bootstrap() -> None:
 # ======================================================================
 
 def list_keywords(user_id: int) -> list[dict]:
+    """
+    يرجع قائمة الكلمات المفتاحية مع match_count محسوب على text_normalized
+    (مطابقة مرنة: أسرى/الأسرى/اسرى يعتبرن نفس الكلمة).
+
+    ملاحظة: نستعمل نسخة text_normalized المحفوظة في DB. النسخة المطبعة
+    للكلمة المفتاحية يتم حسابها وقت INSERT/UPDATE وليس وقت القراءة (للسرعة).
+    """
     with db_cursor() as cur:
         cur.execute("""
             SELECT k.*,
               (SELECT COUNT(*) FROM posts p
-                 WHERE p.user_id=%s AND (
-                   (k.match_mode='contains' AND p.text LIKE CONCAT('%%', k.text, '%%'))
-                   OR (k.match_mode='hashtag' AND p.text LIKE CONCAT('%%#', k.text, '%%'))
-                   OR (k.match_mode='exact' AND p.text=k.text)
+                 WHERE p.user_id=%s AND k.text_normalized != '' AND (
+                   (k.match_mode='contains' AND p.text_normalized LIKE CONCAT('%%', k.text_normalized, '%%'))
+                   OR (k.match_mode='hashtag'  AND p.text_normalized LIKE CONCAT('%%', k.text_normalized, '%%'))
+                   OR (k.match_mode='exact'    AND (p.text_normalized = k.text_normalized
+                                                    OR p.text_normalized = CONCAT('ال', k.text_normalized)))
                  )
               ) AS match_count
             FROM keywords k WHERE user_id=%s
@@ -1750,12 +1850,14 @@ def create_keyword(user_id: int, text: str, mode: str = "contains",
         raise ValueError("نص فارغ")
     if mode not in ("contains", "exact", "hashtag"):
         mode = "contains"
+    norm = _ar_normalize_kw(text)
     now = datetime.now(timezone.utc)
     with db_cursor() as cur:
         cur.execute("""
-            INSERT IGNORE INTO keywords (user_id, text, color, enabled, match_mode, notes, created_at)
-            VALUES (%s, %s, %s, 1, %s, %s, %s)
-        """, (user_id, text[:255], color[:20], mode, notes[:1000], now))
+            INSERT IGNORE INTO keywords
+              (user_id, text, text_normalized, color, enabled, match_mode, notes, created_at)
+            VALUES (%s, %s, %s, %s, 1, %s, %s, %s)
+        """, (user_id, text[:255], norm[:255], color[:20], mode, notes[:1000], now))
         return cur.lastrowid
 
 
@@ -1772,6 +1874,9 @@ def update_keyword(user_id: int, kid: int, **kwargs) -> bool:
             allowed[k] = v
     if not allowed:
         return False
+    # لو النص تغيّر، نُعيد حساب text_normalized
+    if "text" in allowed:
+        allowed["text_normalized"] = _ar_normalize_kw(str(allowed["text"]))[:255]
     cols = ", ".join(f"{c}=%s" for c in allowed)
     with db_cursor() as cur:
         cur.execute(
@@ -1788,23 +1893,31 @@ def delete_keyword(user_id: int, kid: int) -> bool:
 
 
 def keyword_posts(user_id: int, kid: int, limit: int = 500) -> list[dict]:
-    """يرجع كل المنشورات اللي تطابق هذه الكلمة المفتاحية"""
+    """
+    يرجع كل المنشورات اللي تطابق هذه الكلمة المفتاحية بمطابقة مرنة على
+    text_normalized (أسرى/الأسرى/اسرى → نفس المطابقة).
+    """
     kw = get_keyword(user_id, kid)
     if not kw:
         return []
-    text = kw["text"]
+    norm = (kw.get("text_normalized") or "").strip()
+    if not norm:
+        # fallback: لو ما فيه نسخة مطبعة (rows قديمة قبل migration)
+        norm = _ar_normalize_kw(kw.get("text") or "")
+    if not norm:
+        return []
     mode = kw.get("match_mode") or "contains"
     where = "p.user_id=%s AND "
     args = [user_id]
     if mode == "exact":
-        where += "p.text = %s"
-        args.append(text)
-    elif mode == "hashtag":
-        where += "p.text LIKE %s"
-        args.append(f"%#{text}%")
+        # للاستخدام exact نقبل النسخة مع/بدون "ال" البادئة
+        where += "(p.text_normalized = %s OR p.text_normalized = %s)"
+        args.append(norm)
+        args.append("ال" + norm)
     else:
-        where += "p.text LIKE %s"
-        args.append(f"%{text}%")
+        # contains/hashtag كلاهما يستخدم LIKE على النسخة المطبعة
+        where += "p.text_normalized LIKE %s"
+        args.append(f"%{norm}%")
 
     sql = f"""
         SELECT p.* FROM posts p
