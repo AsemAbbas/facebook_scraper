@@ -3191,7 +3191,10 @@ function renderBackendRunRow(r, isActive) {
   const params = r.params || {};
   const result = r.result || {};
 
-  const jobUid = r.id || r.job_uid;
+  // ⚠️ نُفضّل job_uid (UUID hex) على r.id (integer DB id)
+  // الـ backend endpoints تبحث في job_uid column.
+  // لو استعملنا r.id (وهو integer auto-increment) → 404 not found.
+  const jobUid = r.job_uid || r.id;
   return `
     <div class="run-row ${isActive ? 'clickable' : ''}" data-job-uid="${escapeHtml(jobUid || '')}" data-status="${escapeHtml(r.status || '')}" ${isActive ? `data-job-id="${r.id}"` : ''}>
       <div class="run-row-head">
