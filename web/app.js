@@ -399,13 +399,32 @@ async function loadIndex() {
 
 async function loadAllPages() {
   // v4.0: load from /api/posts (all user posts)
+  // نجلب كل المنشورات على دفعات لو العدد كبير (تجنّب payload عملاق دفعة واحدة)
   try {
-    const res = await fetch('/api/posts?limit=500', { credentials: 'include' });
-    if (!res.ok) {
+    const PAGE_SIZE = 1000;
+    let offset = 0;
+    let all = [];
+    let total = 0;
+    // نجلب أول دفعة + total
+    const firstRes = await fetch(`/api/posts?limit=${PAGE_SIZE}&offset=0`, { credentials: 'include' });
+    if (!firstRes.ok) {
       STATE.allPosts = [];
       return;
     }
-    const data = await res.json();
+    const firstData = await firstRes.json();
+    all = firstData.posts || [];
+    total = firstData.total || all.length;
+    // كم مرة نحتاج نجلب لو في أكثر
+    while (all.length < total && all.length < 10000) {
+      offset = all.length;
+      const res = await fetch(`/api/posts?limit=${PAGE_SIZE}&offset=${offset}`, { credentials: 'include' });
+      if (!res.ok) break;
+      const d = await res.json();
+      const batch = d.posts || [];
+      if (batch.length === 0) break;
+      all = all.concat(batch);
+    }
+    const data = { posts: all };
     STATE.allPosts = data.posts || [];
 
     // group by page_slug
@@ -1837,18 +1856,28 @@ function showToast(msg, type = '') {
   setTimeout(() => toast.remove(), 3000);
 }
 
+// نتذكّر scroll position قبل ما نقفل الـ body عشان نرجعه عند الإغلاق
+let _modalScrollY = 0;
+
 function openModal(title, bodyHtml, size = '') {
   els.modalTitle.textContent = title;
   els.modalBody.innerHTML = bodyHtml;
   els.modal.classList.add('active');
   const modalEl = els.modal.querySelector('.modal');
   modalEl.classList.toggle('modal-lg', size === 'lg');
-  document.body.style.overflow = 'hidden';
+  // قفل scroll الخلفي (يعمل على desktop + iOS Safari)
+  _modalScrollY = window.scrollY || window.pageYOffset || 0;
+  document.body.classList.add('modal-open');
+  // نتأكد إن الـ html/body ما يسكرولوا — يستعمل CSS .modal-open class
+  document.body.style.top = `-${_modalScrollY}px`;
 }
 
 function closeModal() {
   els.modal.classList.remove('active');
-  document.body.style.overflow = '';
+  document.body.classList.remove('modal-open');
+  document.body.style.top = '';
+  // رجّع المستخدم لمكان scroll السابق
+  window.scrollTo(0, _modalScrollY);
 }
 
 // ========= Export CSV =========
@@ -2960,6 +2989,14 @@ async function openHistoryModal() {
 }
 
 function renderBackendHistory(active, history) {
+  // عدد كل حالة لعرضها في tabs الفلترة
+  const counts = {
+    all: history.length,
+    success: history.filter(r => r.status === 'success').length,
+    error: history.filter(r => r.status === 'error').length,
+    cancelled: history.filter(r => r.status === 'cancelled').length,
+  };
+
   const html = `
     <div class="history-wrapper">
       ${active.length ? `
@@ -2977,7 +3014,23 @@ function renderBackendHistory(active, history) {
             <h3>📜 آخر التشغيلات (${history.length})</h3>
             <button class="btn-refresh btn-sm btn-danger" id="clearHistoryBtn" type="button" title="حذف كل سجل العمليات">🗑 مسح السجل</button>
           </div>
-          ${history.map(r => renderBackendRunRow(r, false)).join('')}
+          <div class="history-status-filter" id="historyStatusFilter">
+            <button class="hist-filter-btn active" data-filter="all" type="button">
+              الكل <span class="hist-count">${counts.all}</span>
+            </button>
+            <button class="hist-filter-btn" data-filter="success" type="button">
+              ✅ ناجح <span class="hist-count">${counts.success}</span>
+            </button>
+            <button class="hist-filter-btn" data-filter="error" type="button">
+              ❌ فاشل <span class="hist-count">${counts.error}</span>
+            </button>
+            <button class="hist-filter-btn" data-filter="cancelled" type="button">
+              🛑 ملغي <span class="hist-count">${counts.cancelled}</span>
+            </button>
+          </div>
+          <div class="history-rows-list" id="historyRowsList">
+            ${history.map(r => renderBackendRunRow(r, false)).join('')}
+          </div>
         </div>
       ` : `
         <div class="empty-state">
@@ -2989,6 +3042,27 @@ function renderBackendHistory(active, history) {
     </div>
   `;
   els.modalBody.innerHTML = html;
+
+  // ربط فلتر الحالة
+  const filterBar = document.getElementById('historyStatusFilter');
+  if (filterBar) {
+    filterBar.querySelectorAll('.hist-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterBar.querySelectorAll('.hist-filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const f = btn.dataset.filter;
+        const list = document.getElementById('historyRowsList');
+        if (!list) return;
+        list.querySelectorAll('.run-row').forEach(row => {
+          if (f === 'all') {
+            row.style.display = '';
+          } else {
+            row.style.display = (row.dataset.status === f) ? '' : 'none';
+          }
+        });
+      });
+    });
+  }
 
   // Click على active run يفتح progress modal
   document.querySelectorAll('.run-row[data-job-id]').forEach(row => {
@@ -3119,7 +3193,7 @@ function renderBackendRunRow(r, isActive) {
 
   const jobUid = r.id || r.job_uid;
   return `
-    <div class="run-row ${isActive ? 'clickable' : ''}" data-job-uid="${escapeHtml(jobUid || '')}" ${isActive ? `data-job-id="${r.id}"` : ''}>
+    <div class="run-row ${isActive ? 'clickable' : ''}" data-job-uid="${escapeHtml(jobUid || '')}" data-status="${escapeHtml(r.status || '')}" ${isActive ? `data-job-id="${r.id}"` : ''}>
       <div class="run-row-head">
         <span class="run-status ${s.color}">${s.label}</span>
         <span class="run-trigger">${r.trigger === 'schedule' ? '⏰ مجدول' : '👤 يدوي'}</span>

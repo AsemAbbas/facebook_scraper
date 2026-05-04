@@ -1459,6 +1459,16 @@ def _calculate_date_from(preset: str, custom_hours: int) -> Optional[str]:
 
 def _run_scheduled_job(user_id: int, sched: dict):
     """يحوّل schedule إلى scrape job"""
+    # ⚠️ فحص active run **قبل** إنشاء job في DB.
+    # كان هذا bug: الـ scheduler ينشأ job فاشل كل 30 ثانية لما الـ user عنده
+    # active run، فيتراكم 50+ سجل فاشل بسرعة.
+    # الحل: نتجاهل بصمت ونعتمد على retry بعد 30 ثانية بدون تسجيل failure.
+    if _user_has_active_run(user_id):
+        print(f"[scheduler] skipped #{sched.get('id')} — user {user_id} has active run; will retry next tick")
+        # لا نسجّل job ولا في DB، الـ schedule next_run يبقى في الماضي
+        # فالـ scheduler يحاول مرة أخرى بعد 30 ثانية
+        return
+
     job_uid = uuid.uuid4().hex[:12]
     date_from = _calculate_date_from(
         sched.get("date_range_preset", "last_24h"),
@@ -1489,27 +1499,9 @@ def _run_scheduled_job(user_id: int, sched: dict):
             "messages": [],
             "result": None,
             "params": params,
+            "cancel_requested": False,
         }
     db.create_job(user_id, job_uid, params)
-
-    # Skip if user already has a running scrape (prevents data races
-    # when manual + scheduled jobs would otherwise fire concurrently
-    # for the same user, or two schedules for the same user)
-    if _user_has_active_run(user_id):
-        with JOBS_LOCK:
-            if job_uid in JOBS:
-                JOBS[job_uid]["status"] = "error"
-                JOBS[job_uid]["messages"].append({
-                    "time": datetime.now(timezone.utc).isoformat(),
-                    "level": "warn",
-                    "text": "⏸ توجد عملية أخرى قيد التشغيل - تم تأجيل هذا الجدول"
-                })
-        try:
-            db.update_job(job_uid, status="error", finished_at=datetime.now(timezone.utc))
-        except Exception:
-            pass
-        # don't mark_schedule_ran — سيُعاد المحاولة بعد 30 ثانية
-        return
 
     t = threading.Thread(
         target=_run_scheduled_scrape_locked,

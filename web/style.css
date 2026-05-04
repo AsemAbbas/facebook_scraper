@@ -7855,6 +7855,78 @@ html, body {
   html, body { overflow-x: hidden; }
 }
 
+/* ================================================================
+   Modal scroll lock — يمنع سكرول الخلفية لما الـ modal مفتوح
+   تقنية position:fixed تشتغل على iOS Safari (overflow:hidden ما يشتغل)
+   ================================================================ */
+body.modal-open {
+  position: fixed;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  width: 100%;
+  overflow: hidden !important;
+}
+
+/* ================================================================
+   History status filter — tabs لتصفية السجل بالحالة
+   ================================================================ */
+.history-status-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 12px;
+  padding: 8px;
+  background: var(--bg-muted);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.hist-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.15s var(--ease);
+  font-family: inherit;
+}
+
+.hist-filter-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.hist-filter-btn.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.hist-filter-btn.active .hist-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+}
+
+.hist-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  padding: 0 6px;
+  height: 18px;
+  background: var(--bg-elevated);
+  border-radius: 9px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
 @media (max-width: 768px) {
   /* قاعدة عامة: كل عنصر مباشر في الـ root أو main containers
      لا يتجاوز viewport */
